@@ -36,7 +36,7 @@ A feature-rich Discord bot with music playback, moderation tools, and server man
 
 1. **Clone the repository**
    ```bash
-   git clone <your-repo-url>
+   git clone https://github.com/Sudhanshu943/discord-bot.git
    cd discord_multibot
    ```
 
