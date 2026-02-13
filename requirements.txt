@@ -4,3 +4,4 @@ yt-dlp
 PyNaCl
 ffmpeg-python
 ytmusicapi
+aiohttp

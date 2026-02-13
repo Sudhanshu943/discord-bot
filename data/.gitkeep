@@ -1,0 +1,7 @@
+# Data Directory
+# This directory stores persistent data for the Discord bot.
+
+# Chat conversation persistence
+# conversations.json - Stored conversation histories
+
+# This file ensures the directory is tracked by git
