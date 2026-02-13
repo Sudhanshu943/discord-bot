@@ -101,6 +101,23 @@ class ErrorHandler(commands.Cog):
         elif isinstance(error, discord.errors.Forbidden):
             await send_error("❌ I don't have permission to do that!")
         
+        # Discord NotFound (interaction expired, unknown interaction)
+        elif isinstance(error, discord.errors.NotFound):
+            error_msg = str(error)
+            if "10062" in error_msg or "Unknown interaction" in error_msg:
+                # Interaction expired or network issue - no need to show error
+                logger.warning(f"Interaction expired or not found: {error_msg}")
+                return  # Silent return - interaction already expired
+            await send_error("❌ The resource was not found!")
+        
+        # Discord Gateway errors (network issues)
+        elif isinstance(error, discord.errors.GatewayError):
+            await send_error("⚠️ Network issue detected. Please try again in a moment.")
+        
+        # Discord ConnectionClosed
+        elif isinstance(error, discord.errors.ConnectionClosed):
+            await send_error("⚠️ Connection closed. Please try again.")
+        
         # Unknown error - log it
         else:
             error_msg = f"❌ An unexpected error occurred: `{str(error)[:100]}`"

@@ -55,6 +55,19 @@ class Music(commands.Cog):
             if ephemeral:
                 kwargs['ephemeral'] = ephemeral
             
+            # Check if interaction is expired
+            interaction_expired = False
+            if hasattr(ctx, 'interaction') and ctx.interaction:
+                interaction_expired = getattr(ctx.interaction, '_expired', False)
+            
+            # If interaction expired, use channel send instead
+            if interaction_expired:
+                kwargs.pop('view', None)
+                kwargs.pop('ephemeral', None)
+                if ctx.channel:
+                    return await ctx.channel.send(**kwargs)
+                return None
+            
             if hasattr(ctx, 'interaction') and ctx.interaction:
                 if ctx.interaction.response.is_done():
                     return await ctx.interaction.followup.send(**kwargs)
@@ -63,6 +76,7 @@ class Music(commands.Cog):
             else:
                 return await ctx.send(**kwargs)
         except discord.errors.NotFound:
+            # Fallback to channel send if interaction not found
             if ctx.channel:
                 kwargs.pop('view', None)
                 kwargs.pop('ephemeral', None)
@@ -74,7 +88,15 @@ class Music(commands.Cog):
     async def _defer_if_slash(self, ctx):
         """Defer response for slash commands"""
         if hasattr(ctx, 'interaction') and ctx.interaction and not ctx.interaction.response.is_done():
-            await ctx.interaction.response.defer()
+            try:
+                await ctx.interaction.response.defer()
+            except discord.errors.NotFound:
+                # Interaction expired or network issue - mark as expired
+                logger.warning("Interaction defer failed - interaction may have expired")
+                ctx.interaction._expired = True  # Mark as expired for later handling
+            except Exception as e:
+                logger.error(f"Error deferring interaction: {e}")
+                ctx.interaction._expired = True
     
     async def _handle_single_track(self, ctx, track_info: dict, player, pre_extract: bool = True):
         """
@@ -293,51 +315,91 @@ class Music(commands.Cog):
         - Streaming playlist loading
         - Background pre-loading
         """
-        await self._defer_if_slash(ctx)
+        try:
+            await self._defer_if_slash(ctx)
+        except discord.errors.NotFound:
+            # Network issue or interaction expired - inform user
+            embed = discord.Embed(
+                description="⚠️ There was a network issue responding to your command. Please try again.",
+                color=0xffaa00
+            )
+            if ctx.channel:
+                return await ctx.channel.send(embed=embed)
+            return
+        except Exception as e:
+            logger.error(f"Error in play command defer: {e}")
+            embed = discord.Embed(
+                description="⚠️ There was an issue processing your request. Please try again.",
+                color=0xffaa00
+            )
+            if ctx.channel:
+                return await ctx.channel.send(embed=embed)
+            return
 
-        player = self.player_manager.get_player(ctx.guild)
-        player.text_channel = ctx.channel
+        try:
+            player = self.player_manager.get_player(ctx.guild)
+            player.text_channel = ctx.channel
 
-        # Connect to voice
-        if not player.voice_client:
-            if ctx.author.voice:
-                await player.connect(ctx.author.voice.channel)
-            else:
-                embed = MusicEmbeds.error("You're not in a voice channel!")
+            # Connect to voice
+            if not player.voice_client:
+                if ctx.author.voice:
+                    await player.connect(ctx.author.voice.channel)
+                else:
+                    embed = MusicEmbeds.error("You're not in a voice channel!")
+                    return await self._send_response(ctx, embed=embed)
+
+            # Show searching message
+            search_embed = discord.Embed(
+                description=f"🔍 Searching: **{query[:60]}...**",
+                color=0x3498db
+            )
+            search_msg = await self._send_response(ctx, embed=search_embed)
+
+            # ✅ FAST SEARCH (metadata only)
+            logger.info(f"⚡ Searching: {query}")
+            tracks, platform, is_playlist = await self.search_manager.search(
+                query, 
+                limit=50,
+                extract_audio=False  # Fast mode
+            )
+
+            # Delete searching message
+            if search_msg:
+                try:
+                    await search_msg.delete()
+                except:
+                    pass
+
+            if not tracks:
+                embed = MusicEmbeds.error("❌ No tracks found!")
                 return await self._send_response(ctx, embed=embed)
 
-        # Show searching message
-        search_embed = discord.Embed(
-            description=f"🔍 Searching: **{query[:60]}...**",
-            color=0x3498db
-        )
-        search_msg = await self._send_response(ctx, embed=search_embed)
-
-        # ✅ FAST SEARCH (metadata only)
-        logger.info(f"⚡ Searching: {query}")
-        tracks, platform, is_playlist = await self.search_manager.search(
-            query, 
-            limit=50,
-            extract_audio=False  # Fast mode
-        )
-
-        # Delete searching message
-        if search_msg:
+            # Handle playlist vs single track
+            if is_playlist and len(tracks) > 1:
+                await self._handle_playlist(ctx, tracks, platform, player)
+            else:
+                # ✅ PRE-EXTRACT for instant playback
+                await self._handle_single_track(ctx, tracks[0], player, pre_extract=True)
+        except discord.errors.NotFound as e:
+            # Network issue or interaction expired
+            logger.warning(f"NotFound error in play command: {e}")
+            embed = discord.Embed(
+                description="⚠️ There was a network issue. Your command may have timed out. Please try again.",
+                color=0xffaa00
+            )
+            if ctx.channel:
+                try:
+                    await ctx.channel.send(embed=embed)
+                except:
+                    pass
+        except Exception as e:
+            logger.error(f"Error in play command: {e}")
+            embed = MusicEmbeds.error(f"An error occurred: {str(e)[:100]}")
             try:
-                await search_msg.delete()
+                await self._send_response(ctx, embed=embed)
             except:
-                pass
-
-        if not tracks:
-            embed = MusicEmbeds.error("❌ No tracks found!")
-            return await self._send_response(ctx, embed=embed)
-
-        # Handle playlist vs single track
-        if is_playlist and len(tracks) > 1:
-            await self._handle_playlist(ctx, tracks, platform, player)
-        else:
-            # ✅ PRE-EXTRACT for instant playback
-            await self._handle_single_track(ctx, tracks[0], player, pre_extract=True)
+                if ctx.channel:
+                    await ctx.channel.send(embed=embed)
     
     @commands.hybrid_command(name='pause', description='Pause playback')
     async def pause(self, ctx):

@@ -1,6 +1,69 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
+import time
+from datetime import datetime
+
+
+
+class PingEmbeds:
+    """Discord-style ping embed"""
+    
+    @staticmethod
+    def pong(client_latency: int, shard_latency: int) -> discord.Embed:
+        """Beautiful ping embed with timestamp in top right"""
+        
+        # Dynamic color based on latency
+        if client_latency < 100:
+            color = 0x57f287  # Discord green
+            status = "🟢 Excellent"
+        elif client_latency < 200:
+            color = 0xfee75c  # Discord yellow  
+            status = "🟡 Good"
+        elif client_latency < 300:
+            color = 0xfaa61a  # Discord orange
+            status = "🟠 Fair"
+        else:
+            color = 0xed4245  # Discord red
+            status = "🔴 Poor"
+
+        current_time = datetime.now().strftime("%I:%M %p")  
+
+        
+        embed = discord.Embed(
+            title=f"🏓 PONG / LATENCY 🏓 • {current_time}", 
+            description=f"**Status:** {status}",
+            color=color
+        )
+        
+        # Gateway latency
+        embed.add_field(
+            name="🌐 Gateway Latency",
+            value=f"```yaml\n{client_latency} MS\n```",
+            inline=True
+        )
+        
+        # API latency
+        embed.add_field(
+            name="⚡ API Latency",
+            value=f"```yaml\n{shard_latency} MS\n```",
+            inline=True
+        )
+        
+        # Empty field for spacing
+        embed.add_field(name="", value="", inline=False)
+        
+        # Warning
+        embed.add_field(
+            name="",
+            value="> ⚠️ Issues on Discord's side could create weird or high latency.",
+            inline=False
+        )
+        
+        return embed
+
+
+
 
 class HelpCommand(commands.MinimalHelpCommand):
     async def send_pages(self):
@@ -52,6 +115,7 @@ class HelpCommand(commands.MinimalHelpCommand):
             )
         
         await self.get_destination().send(embed=embed)
+
 
 class Help(commands.Cog):
     """Help and information commands"""
@@ -191,12 +255,29 @@ class Help(commands.Cog):
         
         await ctx.send(embed=embed)
     
-    # Hybrid ping command
-    @commands.hybrid_command(name='ping')
+    # Discord-style ping command
+    @commands.hybrid_command(name='ping', description='Check bot latency')
     async def ping(self, ctx):
         """Check bot latency"""
-        latency = round(self.bot.latency * 1000)
-        await ctx.send(f"🏓 Pong! Latency: **{latency}ms**")
+        # Client latency (WebSocket/Gateway)
+        client_latency = round(self.bot.latency * 1000)
+
+        # Start timing for shard latency (API)
+        start = time.perf_counter()
+
+        # Defer to show "Bot is thinking..."
+        if ctx.interaction:
+            await ctx.interaction.response.defer()
+
+        # Calculate shard latency
+        shard_latency = round((time.perf_counter() - start) * 1000)
+
+        # Create Discord-style embed (timestamp automatically top right)
+        embed = PingEmbeds.pong(client_latency, shard_latency)
+
+        # Send
+        await ctx.send(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(Help(bot))
