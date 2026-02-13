@@ -25,7 +25,27 @@ YDL_OPTS = {
     'no_warnings': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
-    'cookiefile': './cookies.txt', # Use cookies for better extraction
+    
+    # ✅ 1. Cookies (most important)
+    'cookiefile': './cookies.txt',
+    
+    # ✅ 2. Android client spoofing
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android_music', 'android', 'web'],
+            'skip': ['hls', 'dash', 'translated_subs']
+        }
+    },
+    
+    # ✅ 3. Mobile User-Agent
+    'http_headers': {
+        'User-Agent': 'com.google.android.youtube/17.31.35 (Linux; U; Android 11) gzip',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate',
+        'DNT': '1',
+    }, # Use cookies for better extraction
+    
     'extract_flat': False,
     'noplaylist': True,
     'nocheckcertificate': True,
