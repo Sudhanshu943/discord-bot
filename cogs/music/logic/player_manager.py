@@ -25,6 +25,7 @@ YDL_OPTS = {
     'no_warnings': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
+    'cookiefile': './cookies.txt', # Use cookies for better extraction
     'extract_flat': False,
     'noplaylist': True,
     'nocheckcertificate': True,
