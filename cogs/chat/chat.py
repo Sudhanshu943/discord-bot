@@ -20,6 +20,7 @@ from .config import ChatConfig
 from .context import ConversationManager
 from .rate_limiter import RateLimiter
 from .providers import LLMProviderManager
+from .personality import get_personality_manager, PersonalityManager
 from .exceptions import (
     ChatException,
     RateLimitException,
@@ -71,6 +72,9 @@ class AIChat(commands.Cog):
             providers=self.config.get_enabled_providers(),
             timeout=self.config.rate_limit.request_timeout
         )
+        
+        # Initialize personality manager for user memory and special commands
+        self.personality_manager = get_personality_manager(bot=self.bot)
 
             # ADD THESE: Fast in-memory caches
         self._conversations_cache: Dict[int, List[Dict]] = {}
@@ -528,6 +532,31 @@ class AIChat(commands.Cog):
         if not content:
             return
         
+        # Check for special personality commands first
+        special_response = self.personality_manager.handle_special_command(
+            user_id=message.author.id,
+            message=content,
+            user_name=message.author.name,
+            channel=message.channel
+        )
+        
+        # Handle who's online command
+        msg_lower = content.lower().strip()
+        if msg_lower in ["who's online", "who is online", "online users", "active users"]:
+            members = await self.personality_manager.get_online_users(message.channel)
+            response_text = self.personality_manager.format_whos_online_response(
+                members, message.channel.name
+            )
+            await message.reply(response_text, mention_author=False)
+            return
+        
+        if special_response:
+            await message.reply(special_response, mention_author=False)
+            return
+        
+        # Update user activity in personality manager
+        self.personality_manager.update_activity(message.author.id)
+
         # Process the message
         try:
             async with message.channel.typing():
@@ -622,13 +651,62 @@ class AIChat(commands.Cog):
         # Skip if message is empty
         if not content:
             return
-
+        
+        # Check for special personality commands first
+        special_response = self.personality_manager.handle_special_command(
+            user_id=message.author.id,
+            message=content,
+            user_name=message.author.name,
+            channel=message.channel
+        )
+        
+        # Handle who's online command
+        msg_lower = content.lower().strip()
+        if msg_lower in ["who's online", "who is online", "online users", "active users"]:
+            members = await self.personality_manager.get_online_users(message.channel)
+            response_text = self.personality_manager.format_whos_online_response(
+                members, message.channel.name
+            )
+            await message.reply(response_text, mention_author=False)
+            return
+        
+        if special_response:
+            await message.reply(special_response, mention_author=False)
+            return
+        
+        # Update user activity in personality manager
+        self.personality_manager.update_activity(message.author.id)
+        
+        # Process mentions in the message - check permissions and get user details
+        mentioned_users_info = ""
+        if hasattr(message.author, 'guild') and message.author.guild:
+            try:
+                mentions_data = self.personality_manager.process_mentions(message)
+                if mentions_data:
+                    mentioned_users_info = "\n\n**Users mentioned in this message:**\n"
+                    for mention in mentions_data:
+                        can_mention = "✅" if mention["can_mention"] else "❌"
+                        mentioned_users_info += (
+                            f"• <@{mention['id']}> - Role: {mention['top_role']}, "
+                            f"Can mention: {can_mention}\n"
+                        )
+            except Exception as e:
+                logger.error(f"Error processing mentions: {e}")
+        
+        # Build enhanced context for AI
+        user_context = f"User: {message.author.display_name} (ID: {message.author.id})"
+        if mentioned_users_info:
+            user_context += mentioned_users_info
+        
+        # Append user context to the message
+        enhanced_message = f"[{user_context}] {content}"
+        
         # Process the message
         try:
             async with message.channel.typing():
                 response, provider = await self._process_chat_request(
                     message.author.id,
-                    content,
+                    enhanced_message,
                     message.channel.id
                 )
 

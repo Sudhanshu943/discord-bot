@@ -1,0 +1,377 @@
+import discord
+from discord.ext import commands
+import configparser
+import json
+from datetime import datetime, timezone, timedelta
+import logging
+
+
+logger = logging.getLogger('discord')
+
+
+class Welcomer(commands.Cog):
+    """Welcome new members to the server"""
+    
+    def __init__(self, bot):
+        self.bot = bot
+        self.config = configparser.ConfigParser()
+        self.config.read('config/settings.ini', encoding='utf-8')
+        
+    def get_config(self, guild_id: int, key: str, default=None):
+        """Get config value for a specific guild or default"""
+        # Try guild-specific config first
+        guild_section = f"welcomer_{guild_id}"
+        if self.config.has_section(guild_section):
+            if self.config.has_option(guild_section, key):
+                return self.config.get(guild_section, key)
+        
+        # Fall back to default welcomer config
+        if self.config.has_section('welcomer'):
+            if self.config.has_option('welcomer', key):
+                return self.config.get('welcomer', key)
+        
+        return default
+    
+    def get_config_bool(self, guild_id: int, key: str, default=False):
+        """Get boolean config value"""
+        value = self.get_config(guild_id, key, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in ('true', 'yes', '1', 'on')
+        return default
+    
+    def get_config_int(self, guild_id: int, key: str, default=0):
+        """Get integer config value"""
+        value = self.get_config(guild_id, key, default)
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+    
+    def get_time_greeting(self):
+        """Get greeting based on time of day (IST)"""
+        # IST is UTC+5:30
+        ist = timezone(timedelta(hours=5, minutes=30))
+        hour = datetime.now(ist).hour
+        
+        if 5 <= hour < 12:
+            return "Good morning"
+        elif 12 <= hour < 17:
+            return "Good afternoon"
+        elif 17 <= hour < 22:
+            return "Good evening"
+        else:
+            return "Good night"
+    
+    def check_milestone(self, guild_id: int, member_count: int):
+        """Check if member count hits a milestone"""
+        milestones_str = self.get_config(guild_id, 'milestones', '100,250,500,1000')
+        
+        try:
+            milestones = [int(m.strip()) for m in milestones_str.split(',') if m.strip().isdigit()]
+        except:
+            milestones = [100, 250, 500, 1000]
+        
+        if member_count in milestones:
+            return f"🎉 You're our {member_count}th member!"
+        
+        return None
+    
+    def get_custom_event_message(self, guild_id: int):
+        """Check for custom events (holidays, etc.)"""
+        custom_events_str = self.get_config(guild_id, 'custom_events', '{}')
+        
+        try:
+            if isinstance(custom_events_str, dict):
+                custom_events = custom_events_str
+            else:
+                # Handle both single and double quotes
+                custom_events_str = custom_events_str.replace("'", '"')
+                custom_events = json.loads(custom_events_str)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse custom_events: {e}")
+            custom_events = {}
+        
+        if not custom_events:
+            return None
+        
+        # Check current date (IST)
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(ist)
+        
+        # Format: "M-D" (e.g., "2-14" for Valentine's Day)
+        month_day = f"{now.month}-{now.day}"
+        
+        # Check exact date match
+        if month_day in custom_events:
+            return custom_events[month_day]
+        
+        # Check with leading zeros (e.g., "02-14")
+        month_day_padded = f"{now.month:02d}-{now.day:02d}"
+        if month_day_padded in custom_events:
+            return custom_events[month_day_padded]
+        
+        return None
+    
+    def build_welcome_message(self, member: discord.Member):
+        """Build a minimalist one-message welcome"""
+        guild = member.guild
+        guild_id = guild.id
+        
+        # Get channels
+        rules_channel_id = self.get_config_int(guild_id, 'rules_channel_id', 0)
+        intro_channel_id = self.get_config_int(guild_id, 'introductions_channel_id', 0)
+        
+        rules_mention = f"<#{rules_channel_id}>" if rules_channel_id else "#rules"
+        intro_mention = f"<#{intro_channel_id}>" if intro_channel_id else "#introductions"
+        
+        # Get greeting
+        greeting = self.get_time_greeting()
+        
+        # Event
+        event = self.get_custom_event_message(guild_id)
+        event_text = f" {event}" if event else ""
+        
+        # Member count
+        count = guild.member_count
+        milestone = self.check_milestone(guild_id, count)
+        
+        # Simple embed
+        embed = discord.Embed(color=0x5865F2)
+        
+        # Main message (one paragraph)
+        message = (
+            f"{greeting}, {member.mention}! 👋\n\n"
+            f"Welcome to **{guild.name}**! "
+        )
+        
+        if milestone:
+            message += f"{milestone}{event_text}\n\n"
+        else:
+            message += f"You're member **#{count}**! 🎉{event_text}\n\n"
+        
+        message += f"Check out {rules_mention} and say hi in {intro_mention}!"
+        
+        embed.description = message
+        
+        # Avatar thumbnail
+        if member.display_avatar:
+            embed.set_thumbnail(url=member.display_avatar.url)
+        
+        return embed
+
+    def build_dm_welcome_message(self, member: discord.Member):
+        """Build the DM welcome message"""
+        guild = member.guild
+        guild_id = guild.id
+        
+        bot_name = self.get_config(guild_id, 'bot_name', 'AI Assistant')
+        server_topics = self.get_config(guild_id, 'server_topics', 'general chat and discussions')
+        
+        time_greeting = self.get_time_greeting()
+        
+        embed = discord.Embed(
+            title=f"🎉 Welcome to {guild.name}!",
+            description=f"{time_greeting}! I'm **{bot_name}**, the AI assistant for this server.",
+            color=discord.Color.green()
+        )
+        
+        embed.add_field(
+            name="What I Can Help With",
+            value=f"I can answer questions, help you navigate the server, and chat about {server_topics}. Just @ mention me anytime in the server!",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Get Started",
+            value="Head back to the server and check out the welcome message for important channels and rules!",
+            inline=False
+        )
+        
+        if guild.icon:
+            embed.set_thumbnail(url=guild.icon.url)
+        
+        embed.set_footer(text=f"You're member #{guild.member_count}!")
+        embed.timestamp = datetime.now(timezone.utc)
+        
+        return embed
+    
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        """Handle new member joins"""
+        # Skip if member is a bot (optional - can be removed if you want to welcome bots too)
+        if member.bot:
+            return
+        
+        guild_id = member.guild.id
+        
+        # Check if welcomer is enabled
+        if not self.get_config_bool(guild_id, 'enabled', False):
+            return
+        
+        # Auto-role assignment
+        auto_role_id = self.get_config_int(guild_id, 'auto_role_id', 0)
+        if auto_role_id:
+            role = member.guild.get_role(auto_role_id)
+            if role:
+                try:
+                    await member.add_roles(role)
+                    logger.info(f"Assigned role {role.name} to {member}")
+                except discord.Forbidden:
+                    logger.error(f"Missing permissions to assign role to {member}")
+                except Exception as e:
+                    logger.error(f"Error assigning role: {e}")
+        
+        # Get welcome channel
+        welcome_channel_id = self.get_config_int(guild_id, 'welcome_channel_id', 0)
+        
+        if not welcome_channel_id:
+            logger.warning(f"No welcome channel configured for guild {guild_id}")
+            return
+        
+        welcome_channel = self.bot.get_channel(welcome_channel_id)
+        
+        if not welcome_channel:
+            logger.warning(f"Welcome channel {welcome_channel_id} not found for guild {guild_id}")
+            return
+        
+        try:
+            # Send welcome message to the welcome channel
+            embed = self.build_welcome_message(member)
+            await welcome_channel.send(embed=embed)
+            logger.info(f"Sent welcome message for {member} in {welcome_channel}")
+            
+            # Send DM welcome if enabled
+            if self.get_config_bool(guild_id, 'dm_welcome', False):
+                try:
+                    dm_embed = self.build_dm_welcome_message(member)
+                    await member.send(embed=dm_embed)
+                    logger.info(f"Sent DM welcome to {member}")
+                except discord.Forbidden:
+                    logger.warning(f"Could not send DM to {member} - likely has DMs disabled")
+                except Exception as e:
+                    logger.error(f"Error sending DM to {member}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error sending welcome message for {member}: {e}")
+    
+    # Configuration commands for the welcomer
+    @commands.group(name='welcomer', invoke_without_command=True)
+    @commands.has_permissions(manage_guild=True)
+    async def welcomer_group(self, ctx):
+        """Welcomer configuration commands"""
+        await ctx.send_help(ctx.command)
+    
+    @welcomer_group.command(name='enable')
+    @commands.has_permissions(manage_guild=True)
+    async def welcomer_enable(self, ctx):
+        """Enable the welcomer"""
+        embed = discord.Embed(
+            title="✅ Welcomer Enabled",
+            description="The welcomer is now enabled! Make sure to configure the settings in `config/settings.ini`",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="Required Settings",
+            value="• `welcome_channel_id` - Channel for welcome messages\n• `bot_name` - Name of the bot\n• `server_topics` - What the server is about",
+            inline=False
+        )
+        await ctx.send(embed=embed)
+    
+    @welcomer_group.command(name='disable')
+    @commands.has_permissions(manage_guild=True)
+    async def welcomer_disable(self, ctx):
+        """Disable the welcomer"""
+        embed = discord.Embed(
+            title="⚠️ Disable Welcomer",
+            description="To disable the welcomer, set `enabled = false` in `config/settings.ini`",
+            color=discord.Color.orange()
+        )
+        await ctx.send(embed=embed)
+    
+    @welcomer_group.command(name='test')
+    @commands.has_permissions(manage_guild=True)
+    async def welcomer_test(self, ctx, member: discord.Member = None):
+        """Test the welcome message"""
+        if member is None:
+            member = ctx.author
+        
+        embed = self.build_welcome_message(member)
+        await ctx.send("**Here's how the welcome message will look:**", embed=embed)
+        
+        # Show custom event if any
+        custom_event = self.get_custom_event_message(ctx.guild.id)
+        if custom_event:
+            event_embed = discord.Embed(
+                title="📅 Today's Event",
+                description=custom_event,
+                color=discord.Color.blue()
+            )
+            await ctx.send(embed=event_embed)
+        else:
+            await ctx.send("ℹ️ No custom event today.")
+    
+    @welcomer_group.command(name='config')
+    @commands.has_permissions(manage_guild=True)
+    async def welcomer_config(self, ctx):
+        """Show current welcomer configuration"""
+        guild_id = ctx.guild.id
+        
+        # Get all config values
+        enabled = self.get_config_bool(guild_id, 'enabled', False)
+        welcome_channel_id = self.get_config_int(guild_id, 'welcome_channel_id', 0)
+        dm_welcome = self.get_config_bool(guild_id, 'dm_welcome', False)
+        bot_name = self.get_config(guild_id, 'bot_name', 'AI Assistant')
+        server_topics = self.get_config(guild_id, 'server_topics', 'general chat and discussions')
+        auto_role_id = self.get_config_int(guild_id, 'auto_role_id', 0)
+        milestones = self.get_config(guild_id, 'milestones', '100,250,500,1000')
+        
+        # Build embed
+        embed = discord.Embed(
+            title="⚙️ Welcomer Configuration",
+            description=f"Configuration for **{ctx.guild.name}**",
+            color=discord.Color.blue()
+        )
+        
+        # Status
+        status = "✅ Enabled" if enabled else "❌ Disabled"
+        embed.add_field(name="Status", value=status, inline=True)
+        
+        # Welcome channel
+        welcome_channel = ctx.guild.get_channel(welcome_channel_id) if welcome_channel_id else None
+        welcome_channel_text = welcome_channel.mention if welcome_channel else "Not set"
+        embed.add_field(name="Welcome Channel", value=welcome_channel_text, inline=True)
+        
+        # DM Welcome
+        dm_status = "✅ Enabled" if dm_welcome else "❌ Disabled"
+        embed.add_field(name="DM Welcome", value=dm_status, inline=True)
+        
+        # Bot info
+        embed.add_field(name="Bot Name", value=bot_name, inline=True)
+        embed.add_field(name="Server Topics", value=server_topics, inline=False)
+        
+        # Auto-role
+        auto_role = ctx.guild.get_role(auto_role_id) if auto_role_id else None
+        auto_role_text = auto_role.mention if auto_role else "Not set"
+        embed.add_field(name="Auto Role", value=auto_role_text, inline=True)
+        
+        # Milestones
+        embed.add_field(name="Milestones", value=milestones, inline=True)
+        
+        # Custom events count
+        custom_events_str = self.get_config(guild_id, 'custom_events', '{}')
+        try:
+            custom_events = json.loads(custom_events_str.replace("'", '"'))
+            event_count = len(custom_events)
+        except:
+            event_count = 0
+        embed.add_field(name="Custom Events", value=f"{event_count} configured", inline=True)
+        
+        embed.set_footer(text="Edit config/settings.ini to change these settings")
+        
+        await ctx.send(embed=embed)
+
+
+async def setup(bot):
+    await bot.add_cog(Welcomer(bot))
