@@ -270,7 +270,7 @@ class PersonalityManager:
         return response
     
     def handle_special_command(self, user_id: int, message: str, 
-                               user_name: str, channel: discord.Channel = None) -> Optional[str]:
+                               user_name: str, channel = None) -> Optional[str]:
         """
         Check if message is a special command and return response if so.
         
