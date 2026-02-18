@@ -20,33 +20,12 @@ logger = logging.getLogger('discord.music.player')
 
 # ✅ OPTIMIZED YT-DLP options for SPEED + Opus preference
 YDL_OPTS = {
-    'format': 'bestaudio[acodec=opus]/bestaudio[acodec!=none]/bestaudio/best',
+    'format': 'bestaudio/best',
     'quiet': True,
-    'no_warnings': True,
-    'default_search': 'ytsearch',
-    'source_address': '0.0.0.0',
-
     'cookiefile': './cookies.txt',
-
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['web', 'android'],
-        }
-    },
-
     'js_runtimes': {
-    'node': {}
-    },
-
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0',
-    },
-
-    'extract_flat': False,
-    'noplaylist': True,
-    'nocheckcertificate': True,
-    'geo_bypass': True,
-    'prefer_ffmpeg': True,
+        'node': {}
+    }
 }
 
 # ✅ OPTIMIZED FFmpeg options for LOW LATENCY
