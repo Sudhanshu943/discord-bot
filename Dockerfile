@@ -17,6 +17,5 @@ COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Start bot
-# CMD ["python", "bot.py"]
-CMD ["node", "-v"]
+CMD ["python", "bot.py"]
 
