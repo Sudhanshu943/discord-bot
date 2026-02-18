@@ -34,7 +34,9 @@ YDL_OPTS = {
         }
     },
 
-    'js_runtimes': ['node'],
+    'js_runtimes': {
+    'node': {}
+    },
 
     'http_headers': {
         'User-Agent': 'Mozilla/5.0',
