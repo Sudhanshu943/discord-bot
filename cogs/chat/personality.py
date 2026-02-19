@@ -203,7 +203,7 @@ class PersonalityManager:
     def format_help_response(self, user_name: str) -> str:
         """Format the help response."""
         return (
-            f"Hey {user_name}. I'm here to respond with sarcasm and short answers. "
+            f"Hey @{user_name}. I'm here to respond with clearity and short answers. "
             f"Use `/ask` or `/chat`, or just mention me.\n\n"
             f"**Commands:**\n"
             f"• `who's online` - See active users (if anyone's actually here)\n"
@@ -258,7 +258,7 @@ class PersonalityManager:
         
         if not info["things_remembered"] and not info["interests"] and not info["preferences"]:
             response = (
-                f"I don't know anything about you yet, {user_name}. "
+                f"I don't know anything about you yet, @{user_name}. "
                 f"Not that I'm dying to learn. 😒"
             )
         
