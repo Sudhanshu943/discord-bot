@@ -154,17 +154,20 @@ async def on_ready():
     logger.info(f'Connected to {len(bot.guilds)} guilds')
     logger.info(f'Loaded cogs: {", ".join(bot.loaded_cogs)}')
     
-    # For testing: sync to specific guild (instant)
-    TEST_GUILD_ID = 1288847751123042334  # Replace with your server ID
-    
     try:
-        guild = discord.Object(id=TEST_GUILD_ID)
-        bot.tree.copy_global_to(guild=guild)  # Copy global commands to guild
-        synced = await bot.tree.sync(guild=guild)  # Guild-specific sync (instant)
-        logger.info(f"✅ Synced {len(synced)} commands to test guild (instant)")
+        # Sync commands globally
+        synced = await bot.tree.sync()
+        logger.info(f"✅ Synced {len(synced)} commands globally")
         
-        # Optional: Also sync globally (takes 1 hour)
-        # await bot.tree.sync()
+        # Also sync to all connected guilds for instant availability
+        for guild in bot.guilds:
+            try:
+                bot.tree.copy_global_to(guild=guild)
+                guild_synced = await bot.tree.sync(guild=guild)
+                logger.info(f"✅ Synced {len(guild_synced)} commands to guild: {guild.name} (ID: {guild.id})")
+            except Exception as e:
+                logger.error(f"❌ Failed to sync commands to guild {guild.name} (ID: {guild.id}): {e}")
+                
     except Exception as e:
         logger.error(f"❌ Failed to sync commands: {e}")
 
