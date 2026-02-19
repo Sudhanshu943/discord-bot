@@ -122,12 +122,35 @@ class MusicEmbeds:
 
 class MusicControlsView(discord.ui.View):
     """Premium control layout - Spotify-style"""
-    
+
+    def _on_cooldown(self) -> bool:
+        now = asyncio.get_event_loop().time()
+        if now - self._last_action_time < self._cooldown_seconds:
+            return True
+        self._last_action_time = now
+        return False
+
+
+    def _user_in_same_voice(self, interaction: discord.Interaction) -> bool:
+        if not self.player or not self.player.voice_client:
+            return False
+
+        user_voice = getattr(interaction.user, "voice", None)
+        if not user_voice or not user_voice.channel:
+            return False
+
+        return user_voice.channel == self.player.voice_client.channel
+
+
+
     def __init__(self, player, timeout: float = 300, auto_delete: bool = False):
         super().__init__(timeout=timeout)
         self.player = player
         self.message: Optional[discord.Message] = None
         self.auto_delete = auto_delete
+        self._last_action_time = 0
+        self._cooldown_seconds = 2
+
         self._update_states()
         
         # Only start monitoring if auto_delete is True
@@ -188,9 +211,24 @@ class MusicControlsView(discord.ui.View):
     @discord.ui.button(emoji="⏸", style=discord.ButtonStyle.secondary, custom_id="ctrl:pause", row=0)
     async def pause_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Pause/Resume toggle"""
-        if not self.player or not self.player.voice_client:
-            return await interaction.response.send_message("❌ Not connected", ephemeral=True)
+        if not self._user_in_same_voice(interaction):
+            return await interaction.response.send_message(
+                "❌ You must be in the same voice channel as the bot.",
+                ephemeral=True
+            )
+
+        if not self.player or not self.player.is_playing:
+            return await interaction.response.send_message("❌ Nothing playing", ephemeral=True)
+
         
+        if self._on_cooldown():
+            return await interaction.response.send_message(
+                "⏳ Slow down.",
+                ephemeral=True
+            )
+
+
+
         if self.player.is_paused:
             await self.player.resume()
             button.emoji = "⏸"
@@ -210,19 +248,28 @@ class MusicControlsView(discord.ui.View):
     @discord.ui.button(emoji="⏭", style=discord.ButtonStyle.secondary, custom_id="ctrl:skip", row=0)
     async def skip_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Skip track"""
+        if not self._user_in_same_voice(interaction):
+            return await interaction.response.send_message(
+                "❌ You must be in the same voice channel as the bot.",
+                ephemeral=True
+            )
+
         if not self.player or not self.player.is_playing:
             return await interaction.response.send_message("❌ Nothing playing", ephemeral=True)
 
+
         skipped = self.player.current
 
+        if self._on_cooldown():
+            return await interaction.response.send_message(
+                "⏳ Slow down.",
+                ephemeral=True
+            )
+
+
         # Delete current controller INSTANTLY
-        if self.player.controller_message:
-            try:
-                await self.player.controller_message.delete()
-                logger.info("Deleted controller on skip")
-            except:
-                pass
-            self.player.controller_message = None
+        await self.player.delete_controller()
+        logger.info("Deleted controller on skip")
 
         # Skip the song (this triggers play_next which creates new controller)
         await self.player.skip()
@@ -235,17 +282,26 @@ class MusicControlsView(discord.ui.View):
     @discord.ui.button(emoji="⏹", style=discord.ButtonStyle.danger, custom_id="ctrl:stop", row=0)
     async def stop_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Stop playback"""
-        if not self.player:
-            return await interaction.response.send_message("❌ Not connected", ephemeral=True)
+        if not self._user_in_same_voice(interaction):
+            return await interaction.response.send_message(
+                "❌ You must be in the same voice channel as the bot.",
+                ephemeral=True
+            )
         
+        if not self.player or not self.player.is_playing:
+            return await interaction.response.send_message("❌ Nothing playing", ephemeral=True)
+
+        if self._on_cooldown():
+            return await interaction.response.send_message(
+                "⏳ Slow down.",
+                ephemeral=True
+            )
+
+
+
         # Delete controller INSTANTLY
-        if self.player.controller_message:
-            try:
-                await self.player.controller_message.delete()
-                logger.info("Deleted controller on stop")
-            except:
-                pass
-            self.player.controller_message = None
+        await self.player.delete_controller()
+        logger.info("Deleted controller on stop")
         
         await self.player.stop()
         await interaction.response.send_message("⏹ Stopped and cleared queue", ephemeral=True)
@@ -254,8 +310,15 @@ class MusicControlsView(discord.ui.View):
     @discord.ui.button(emoji="🔊", style=discord.ButtonStyle.secondary, custom_id="ctrl:vol", row=0)
     async def volume_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Volume controls"""
-        if not self.player:
-            return await interaction.response.send_message("❌ Not connected", ephemeral=True)
+        if not self._user_in_same_voice(interaction):
+            return await interaction.response.send_message(
+                "❌ You must be in the same voice channel as the bot.",
+                ephemeral=True
+            )
+
+        if not self.player or not self.player.is_playing:
+            return await interaction.response.send_message("❌ Nothing playing", ephemeral=True)
+
         
         view = VolumeModal(self.player)
         current_vol = int(self.player.volume * 100)
@@ -272,8 +335,23 @@ class MusicControlsView(discord.ui.View):
     @discord.ui.button(emoji="🔀", label="Shuffle", style=discord.ButtonStyle.secondary, custom_id="ctrl:shuffle", row=1)
     async def shuffle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Shuffle queue"""
-        if not self.player or self.player.queue_empty:
-            return await interaction.response.send_message("❌ Queue empty", ephemeral=True)
+        if not self._user_in_same_voice(interaction):
+            return await interaction.response.send_message(
+                "❌ You must be in the same voice channel as the bot.",
+                ephemeral=True
+            )
+
+        if not self.player or not self.player.is_playing:
+            return await interaction.response.send_message("❌ Queue is empty", ephemeral=True)
+        
+
+        if self._on_cooldown():
+            return await interaction.response.send_message(
+                "⏳ Slow down.",
+                ephemeral=True
+            )
+
+
         
         self.player.shuffle_queue()
         await interaction.response.send_message(f"🔀 Shuffled {self.player.queue_count} tracks", ephemeral=True)
@@ -281,8 +359,23 @@ class MusicControlsView(discord.ui.View):
     @discord.ui.button(emoji="🔁", label="Loop", style=discord.ButtonStyle.secondary, custom_id="ctrl:loop", row=1)
     async def loop_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Toggle loop"""
-        if not self.player or not self.player.current:
+        if not self._user_in_same_voice(interaction):
+            return await interaction.response.send_message(
+                "❌ You must be in the same voice channel as the bot.",
+                ephemeral=True
+            )
+
+        if not self.player or not self.player.is_playing:
             return await interaction.response.send_message("❌ Nothing playing", ephemeral=True)
+        
+
+        if self._on_cooldown():
+            return await interaction.response.send_message(
+                "⏳ Slow down.",
+                ephemeral=True
+            )
+
+
         
         self.player.loop = not self.player.loop
         
@@ -310,8 +403,23 @@ class MusicControlsView(discord.ui.View):
     @discord.ui.button(emoji="🗑️", label="Clear", style=discord.ButtonStyle.danger, custom_id="ctrl:clear", row=1)
     async def clear_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Clear queue"""
+        if not self._user_in_same_voice(interaction):
+            return await interaction.response.send_message(
+                "❌ You must be in the same voice channel as the bot.",
+                ephemeral=True
+            )
+
         if not self.player or self.player.queue_empty:
-            return await interaction.response.send_message("❌ Queue already empty", ephemeral=True)
+            return await interaction.response.send_message("❌ Queue is already empty", ephemeral=True)
+        
+
+        if self._on_cooldown():
+            return await interaction.response.send_message(
+                "⏳ Slow down.",
+                ephemeral=True
+            )
+        
+
         
         cleared = self.player.queue_count
         self.player.clear_queue()

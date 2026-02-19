@@ -88,11 +88,12 @@ class MusicPlayer:
         self.current: Song = None
         self.volume: float = 0.5
         self.loop: bool = False
-        self._is_playing: bool = False
         self.text_channel: discord.TextChannel = None
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)  # Increased workers
         self.controller_message: discord.Message = None
-        self._preload_task: Optional[asyncio.Task] = None  # Track pre-loading task
+        self._preload_task: Optional[asyncio.Task] = None  
+        self._idle_task: Optional[asyncio.Task] = None
+
     
     @property
     def is_playing(self) -> bool:
@@ -124,18 +125,26 @@ class MusicPlayer:
             return False
     
     async def disconnect(self):
-        """Disconnect from voice"""
-        # Cancel pre-loading task
+        # Cancel preload task
         if self._preload_task and not self._preload_task.done():
             self._preload_task.cancel()
-        
+
+        # Shutdown executor
+        try:
+            self.executor.shutdown(wait=False)
+        except Exception:
+            pass
+
         if self.voice_client:
             await self.voice_client.disconnect()
             self.voice_client = None
+
         self.queue.clear()
         self.current = None
-        self._is_playing = False
+        
+
         logger.info(f"Disconnected from {self.guild.name}")
+
     
     async def extract_audio_url(self, url: str, fast: bool = False) -> Optional[str]:
         """
@@ -221,8 +230,11 @@ class MusicPlayer:
             return
         
         # Get next song (without removing from queue)
-        next_song = list(self.queue)[0]
-        
+        try:
+            next_song = self.queue[0]
+        except IndexError:
+            return
+
         # Only extract if pending
         if next_song.source == "pending" and next_song.url:
             logger.info(f"🔄 Pre-loading: {next_song.title[:40]}...")
@@ -236,12 +248,35 @@ class MusicPlayer:
                     logger.warning(f"⚠️ Pre-load failed: {next_song.title[:40]}")
             except Exception as e:
                 logger.error(f"Pre-load error: {e}")
+
+
+    async def _idle_disconnect(self):
+        try:
+            await asyncio.sleep(60)
+
+            # If still idle after 60 seconds
+            if not self.is_playing and not self.queue:
+                logger.info(f"Idle timeout reached in {self.guild.name}, disconnecting.")
+                await self.disconnect()
+
+        except asyncio.CancelledError:
+            pass
+
+
+
+
     
     async def play_song(self, song: Song):
         """Play a song with INSTANT start"""
+
         if not self.voice_client:
             logger.error("No voice client")
             return
+        
+        # Cancel idle timer if playing again
+        if self._idle_task and not self._idle_task.done():
+            self._idle_task.cancel()
+
 
         # ✅ LAZY EXTRACTION with feedback
         if not song.source or song.source == "pending":
@@ -291,7 +326,7 @@ class MusicPlayer:
             return
 
         self.current = song
-        self._is_playing = True
+        
 
         try:
             logger.info(f"▶ Playing: {song.title[:50]}")
@@ -301,12 +336,7 @@ class MusicPlayer:
             self.voice_client.play(source, after=lambda e: self._after_play(e))
 
             # Delete old controller
-            if self.controller_message:
-                try:
-                    await self.controller_message.delete()
-                except:
-                    pass
-                self.controller_message = None
+            await self.delete_controller()
 
             # Send new controller
             if self.text_channel:
@@ -325,8 +355,14 @@ class MusicPlayer:
                     logger.error(f"Controller error: {e}")
             
             # ✅ START PRE-LOADING NEXT SONG (background)
+            # Cancel previous preload task if running
+            if self._preload_task and not self._preload_task.done():
+                self._preload_task.cancel()
+
+            # Start new preload task
             if not self.queue_empty:
                 self._preload_task = asyncio.create_task(self._preload_next_song())
+
 
         except Exception as e:
             logger.error(f"Playback error: {e}")
@@ -349,15 +385,17 @@ class MusicPlayer:
         finished_song = self.current
 
         if not self.queue:
-            self._is_playing = False
+            
             self.current = None
 
-            if self.controller_message:
-                try:
-                    await self.controller_message.delete()
-                except:
-                    pass
-                self.controller_message = None
+            # 🔥 Start idle disconnect timer
+            if self._idle_task and not self._idle_task.done():
+                self._idle_task.cancel()
+
+            self._idle_task = asyncio.create_task(self._idle_disconnect())
+
+            await self.delete_controller()
+
 
             if self.text_channel and finished_song:
                 try:
@@ -415,7 +453,7 @@ class MusicPlayer:
         if self.voice_client:
             self.voice_client.stop()
         self.current = None
-        self._is_playing = False
+        
     
     def set_volume(self, volume: int):
         """Set volume (0-100)"""
@@ -438,6 +476,30 @@ class MusicPlayer:
         random.shuffle(items)
         self.queue = deque(items)
     
+    async def check_empty_channel(self):
+        if not self.voice_client:
+            return
+
+        channel = self.voice_client.channel
+        if not channel:
+            return
+
+        non_bot_members = [
+            member for member in channel.members
+            if not member.bot
+        ]
+
+        if len(non_bot_members) == 0:
+            await self.disconnect()
+
+    async def delete_controller(self):
+        if self.controller_message:
+            try:
+                await self.controller_message.delete()
+            except:
+                pass
+            self.controller_message = None
+
     def remove_from_queue(self, position: int) -> Optional[Song]:
         """Remove song at position (1-based)"""
         if position < 1 or position > len(self.queue):

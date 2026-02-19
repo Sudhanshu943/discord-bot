@@ -5,7 +5,7 @@ A modular music system for Discord bots using yt-dlp.
 No Lavalink required! Supports YouTube, Spotify, SoundCloud, and 1000+ platforms.
 
 Structure:
-- music.py: Main cog with all commands
+- cog.py: Main cog with all commands
 - ui.py: UI components (embeds, views, buttons)
 - exceptions.py: Custom exceptions and error handling
 - logic/: Core logic modules
