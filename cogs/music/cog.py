@@ -35,10 +35,17 @@ class Music(commands.Cog):
         logger.info("⚡ Music cog initialized (ULTRA-FAST mode)")
     
     async def cog_unload(self):
-        """Cleanup when cog is unloaded"""
+        
         for guild in self.bot.guilds:
             await self.player_manager.disconnect(guild)
+
+        try:
+            self.search_manager.shutdown()
+        except Exception:
+            pass
+
         logger.info("Music cog unloaded")
+
     
     # ==================== HELPER METHODS ====================
     
@@ -264,12 +271,17 @@ class Music(commands.Cog):
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         """Handle voice state changes"""
-        if member.id != self.bot.user.id:
+        if member.id == self.bot.user.id:
+            if before.channel and not after.channel:
+                self.player_manager.remove_player(member.guild.id)
+                logger.info(f"Bot disconnected from {member.guild.name}")
             return
         
+        # Check if member left a voice channel
         if before.channel and not after.channel:
-            self.player_manager.remove_player(member.guild.id)
-            logger.info(f"Bot disconnected from {member.guild.name}")
+            player = self.player_manager.get_player(member.guild)
+            if player.voice_client and player.voice_client.channel == before.channel:
+                await player.check_empty_channel()
     
     # ==================== CONNECTION COMMANDS ====================
     
@@ -682,8 +694,14 @@ class Music(commands.Cog):
             'count': len(songs)
         }
         
-        with open(playlist_file, 'w', encoding='utf-8') as f:
+        temp_file = playlist_file + ".tmp"
+
+        with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(playlists, f, indent=2, ensure_ascii=False)
+        
+        os.replace(temp_file, playlist_file)
+        
+
         
         embed = MusicEmbeds.success(f"✅ Saved **{len(songs)}** tracks to **{name}**")
         await self._send_response(ctx, embed=embed)
@@ -813,8 +831,13 @@ class Music(commands.Cog):
         
         del playlists[name]
         
-        with open(playlist_file, 'w', encoding='utf-8') as f:
+        temp_file = playlist_file + ".tmp"
+
+        with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(playlists, f, indent=2, ensure_ascii=False)
+        
+        os.replace(temp_file, playlist_file)
+        
         
         embed = MusicEmbeds.success(f"🗑️ Deleted **{name}**")
         await self._send_response(ctx, embed=embed)

@@ -499,5 +499,12 @@ class SearchManager:
         }
         return names.get(platform, "Unknown")
 
+    def shutdown(self):
+        """Shutdown executor cleanly"""
+        try:
+            self.executor.shutdown(wait=False)
+        except Exception:
+            pass
+
 # Global search manager instance
 search_manager = SearchManager(use_youtube_music=True)
