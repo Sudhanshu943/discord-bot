@@ -52,6 +52,7 @@ class PersonalityManager:
     - User memory (interests, preferences, things to remember)
     - Special command handling (help, who's online, remember, etc.)
     - Channel awareness (active users)
+    - Music preferences management
     """
     
     DEFAULT_MEMORY_PATH = "data/user_memory.json"
@@ -293,6 +294,36 @@ class PersonalityManager:
         if msg_lower in ["what do you know about me", "what do you know about me?", 
                          "tell me about me", "my info"]:
             return self.format_what_know_response(user_id, user_name)
+        
+        # Music-related commands
+        if any(keyword in msg_lower for keyword in ["trending song", "trending songs", "top song", "top songs", "latest song"]):
+            return (
+                f"Arre {user_name}, tu toh bewakoof hai! Trending songs? Yahan kuch naya nahi hota. "
+                f"Lekin dekh le ye gaane abhi chal rahe hain:\n>> Kala Chashma\n>> Lungi Dance"
+            )
+        
+        if any(keyword in msg_lower for keyword in ["party song", "dance song", "dance music"]):
+            return (
+                f"{user_name} ke liye party songs? Tu toh apni gaadi mein hi dance karta hai! "
+                f"Chal dekh le ye:\n>> Lungi Dance\n>> Kala Chashma\n>> Baby Doll"
+            )
+        
+        if any(keyword in msg_lower for keyword in ["sad song", "romantic song", "love song"]):
+            return (
+                f"{user_name} rone wala hai? Romantic songs sunke kya kar lega? "
+                f"Lekin ye lo:\n>> Tum Hi Ho\n>> Samjhawan\n>> Raabta"
+            )
+        
+        if any(keyword in msg_lower for keyword in ["punjabi song", "punjabi music"]):
+            return (
+                f"{user_name} ko Punjabi songs pasand hain? Tu toh Sirf Ludo khelta hai! "
+                f"Chal ye lo:\n>> Brown Munde\n>> Laung Laachi\n>> High Rated Gabru"
+            )
+        
+        if any(keyword in msg_lower for keyword in ["baja de", "sunao", "play", "suna de", "sun le"]):
+            return (
+                f"{user_name}, teri bezzati karne ke liye nahin banaya gaya, phir bhi ek gaana sunaunga - >> Kala Chashma ab sun le varna teri aukaat nahin hai mujhse demand karni."
+            )
         
         return None
     

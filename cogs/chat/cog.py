@@ -14,6 +14,7 @@ from typing import Optional, Literal, List, Tuple, Dict, Any
 import logging
 import asyncio
 import time
+import re
 from datetime import datetime
 
 from .config import ChatConfig
@@ -75,6 +76,10 @@ class AIChat(commands.Cog):
         
         # Initialize personality manager for user memory and special commands
         self.personality_manager = get_personality_manager(bot=self.bot)
+        
+        # Initialize music integration
+        from .music_integration import MusicIntegration
+        self.music_integration = MusicIntegration(bot=self.bot)
 
             # ADD THESE: Fast in-memory caches
         self._conversations_cache: Dict[int, List[Dict]] = {}
@@ -494,6 +499,155 @@ class AIChat(commands.Cog):
         
         await ctx.send(embed=embed)
     
+    # ==================== Music Integration Commands ====================
+    
+    @commands.hybrid_command(
+        name="recommendsong",
+        description="Get a song recommendation based on your preferences"
+    )
+    async def recommend_song(self, ctx: commands.Context, mood: Optional[str] = None):
+        """
+        Get a song recommendation based on your preferences or mood.
+        
+        Args:
+            mood: Optional mood (happy, sad, energetic, calm, romantic, party, focus)
+        """
+        # Get recommendations
+        recommendations = await self.music_integration.recommend_songs(
+            ctx.author.id, 
+            mood=mood
+        )
+        
+        if not recommendations:
+            await ctx.send("❌ No song recommendations available.")
+            return
+        
+        # Create embed with recommendations
+        embed = discord.Embed(
+            title="🎵 Song Recommendations",
+            description=f"Here are some songs you might enjoy{' based on your mood' + (f': {mood}' if mood else '')}!",
+            color=discord.Color.green()
+        )
+        
+        for i, song in enumerate(recommendations[:5], 1):  # Show top 5 recommendations
+            embed.add_field(
+                name=f"{i}. {song}",
+                value="Click to play or use `/play` command",
+                inline=False
+            )
+        
+        embed.set_footer(text="Want to play a song? Use /play <song name>")
+        
+        await ctx.send(embed=embed)
+    
+    @commands.hybrid_command(
+        name="createplaylist",
+        description="Create a playlist based on a theme"
+    )
+    async def create_playlist(self, ctx: commands.Context, theme: str, num_songs: int = 5):
+        """
+        Create a playlist based on a theme.
+        
+        Args:
+            theme: Theme of the playlist (e.g., "workout", "relaxing", "party")
+            num_songs: Number of songs to include (default: 5)
+        """
+        if num_songs < 1 or num_songs > 20:
+            await ctx.send("❌ Number of songs must be between 1 and 20.")
+            return
+        
+        # Create playlist
+        playlist = await self.music_integration.create_playlist(
+            ctx.author.id, 
+            theme, 
+            num_songs
+        )
+        
+        if not playlist:
+            await ctx.send("❌ Failed to create playlist.")
+            return
+        
+        # Create embed with playlist
+        embed = discord.Embed(
+            title=f"📋 Playlist: {theme}",
+            description=f"Created a playlist with {len(playlist)} songs!",
+            color=discord.Color.blue()
+        )
+        
+        for i, song in enumerate(playlist, 1):
+            embed.add_field(
+                name=f"{i}. {song}",
+                value="Click to play or use `/play` command",
+                inline=False
+            )
+        
+        embed.set_footer(text="Add these songs to queue with /play <song name>")
+        
+        await ctx.send(embed=embed)
+    
+    @commands.hybrid_command(
+        name="musicpreferences",
+        description="View your music preferences"
+    )
+    async def music_preferences(self, ctx: commands.Context):
+        """View your music preferences stored by the bot."""
+        preferences = await self.music_integration.get_or_create_preference(ctx.author.id)
+        
+        embed = discord.Embed(
+            title="🎵 Your Music Preferences",
+            color=discord.Color.purple()
+        )
+        
+        if preferences.favorite_genres:
+            embed.add_field(
+                name="Favorite Genres",
+                value=", ".join(preferences.favorite_genres) if preferences.favorite_genres else "None",
+                inline=False
+            )
+        
+        if preferences.favorite_artists:
+            embed.add_field(
+                name="Favorite Artists",
+                value=", ".join(preferences.favorite_artists) if preferences.favorite_artists else "None",
+                inline=False
+            )
+        
+        if preferences.preferred_moods:
+            embed.add_field(
+                name="Preferred Moods",
+                value=", ".join(preferences.preferred_moods) if preferences.preferred_moods else "None",
+                inline=False
+            )
+        
+        if preferences.last_played_songs:
+            embed.add_field(
+                name="Last Played Songs",
+                value=", ".join(preferences.last_played_songs[:3]) if preferences.last_played_songs else "None",
+                inline=False
+            )
+        
+        embed.set_footer(text="Preferences are automatically learned from conversations!")
+        
+        await ctx.send(embed=embed)
+    
+    @commands.hybrid_command(
+        name="roastme",
+        description="Get a sarcastic song recommendation"
+    )
+    async def roast_me(self, ctx: commands.Context):
+        """Get a sarcastic/playful song recommendation for roasting."""
+        song = await self.music_integration.get_sarcastic_song()
+        
+        embed = discord.Embed(
+            title="🔥 Sarcastic Song Recommendation",
+            description=f"I recommend: **{song}**",
+            color=discord.Color.orange()
+        )
+        
+        embed.set_footer(text="Don't take it personally! 😜")
+        
+        await ctx.send(embed=embed)
+    
     # ==================== Message Listener ====================
     
     @commands.Cog.listener()
@@ -551,7 +705,19 @@ class AIChat(commands.Cog):
             return
         
         if special_response:
-            await message.reply(special_response, mention_author=False)
+            # Check for song recommendations in >> format in the special response
+            song_recommendations = re.findall(r'>>\s*(.*?)(?=\n|$)', special_response)
+            if song_recommendations:
+                # Send the personality response
+                await message.reply(special_response, mention_author=False)
+                # Play the recommended songs
+                for song_query in song_recommendations:
+                    if song_query.strip():
+                        success, play_response = await self.music_integration.search_and_play(message, song_query.strip())
+                        await message.reply(play_response, mention_author=False)
+            else:
+                # No song recommendations in response, just send the message
+                await message.reply(special_response, mention_author=False)
             return
         
         # Update user activity in personality manager
@@ -573,13 +739,25 @@ class AIChat(commands.Cog):
             else:
                 response_text = response
             
-            # Handle long responses
-            if len(response_text) > 2000:
-                chunks = self._split_message(response_text, 2000)
-                for chunk in chunks:
-                    await message.reply(chunk, mention_author=False)
-            else:
+            # Check for song recommendations in >> format in the response
+            song_recommendations = re.findall(r'>>\s*(.*?)(?=\n|$)', response_text)
+            if song_recommendations:
+                # Send the personality response
                 await message.reply(response_text, mention_author=False)
+                # Play the recommended songs
+                for song_query in song_recommendations:
+                    if song_query.strip():
+                        success, play_response = await self.music_integration.search_and_play(message, song_query.strip())
+                        await message.reply(play_response, mention_author=False)
+            else:
+                # No song recommendations in response, just send the message
+                # Handle long responses
+                if len(response_text) > 2000:
+                    chunks = self._split_message(response_text, 2000)
+                    for chunk in chunks:
+                        await message.reply(chunk, mention_author=False)
+                else:
+                    await message.reply(response_text, mention_author=False)
         
         except RateLimitException as e:
             await message.reply(
@@ -671,11 +849,37 @@ class AIChat(commands.Cog):
             return
         
         if special_response:
-            await message.reply(special_response, mention_author=False)
+            # Check for song recommendations in >> format in the special response
+            song_recommendations = re.findall(r'>>\s*(.*?)(?=\n|$)', special_response)
+            if song_recommendations:
+                # Send the personality response
+                await message.reply(special_response, mention_author=False)
+                # Play the recommended songs
+                for song_query in song_recommendations:
+                    if song_query.strip():
+                        success, play_response = await self.music_integration.search_and_play(message, song_query.strip())
+                        await message.reply(play_response, mention_author=False)
+            else:
+                # No song recommendations in response, just send the message
+                await message.reply(special_response, mention_author=False)
             return
         
         # Update user activity in personality manager
         self.personality_manager.update_activity(message.author.id)
+        
+        # Update music preferences from conversation
+        await self.music_integration.update_preferences_from_conversation(
+            message.author.id, content
+        )
+        
+        # Check if message contains song recommendations in >> format
+        song_recommendations = re.findall(r'>>\s*(.*?)(?=\n|$)', content)
+        if song_recommendations:
+            for song_query in song_recommendations:
+                if song_query.strip():
+                    success, response = await self.music_integration.search_and_play(message, song_query.strip())
+                    await message.reply(response, mention_author=False)
+            return
         
         # Process mentions in the message - check permissions and get user details
         mentioned_users_info = ""
