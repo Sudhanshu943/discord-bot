@@ -203,68 +203,63 @@ class PersonalityManager:
     def format_help_response(self, user_name: str) -> str:
         """Format the help response."""
         return (
-            f"Hi {user_name}! 👋 I'm your friendly AI assistant here on this server.\n\n"
-            f"**What I can do:**\n"
-            f"• Answer your questions and have conversations\n"
-            f"• Help you with server-related information\n"
-            f"• Remember your preferences and interests\n"
-            f"• Use `/ask` or `/chat` commands to talk to me\n"
-            f"• Just mention me in any channel to chat!\n\n"
-            f"**Special commands:**\n"
-            f"• `who's online` - See who's active in this channel\n"
-            f"• `remember [something]` - I'll remember that info\n"
-            f"• `what do you know about me` - See what I've learned about you\n\n"
-            f"Just ask me anything! 😊"
+            f"Hey {user_name}. I'm here to respond with sarcasm and short answers. "
+            f"Use `/ask` or `/chat`, or just mention me.\n\n"
+            f"**Commands:**\n"
+            f"• `who's online` - See active users (if anyone's actually here)\n"
+            f"• `remember [something]` - I'll 'remember' that (no promises)\n"
+            f"• `what do you know about me` - See if I bother to recall anything\n\n"
+            f"Don't expect too much. 😉"
         )
     
     def format_whos_online_response(self, members: List[discord.Member], channel_name: str) -> str:
         """Format the who's online response."""
         if not members:
-            return f"😴 No one else is currently active in #{channel_name}. Be the first to say hi!"
+            return f"Crickets in #{channel_name}. No one's here but us bots."
         
         mentions = [f"<@{m.id}>" for m in members[:10]]  # Max 10 mentions
         others = len(members) - 10 if len(members) > 10 else 0
         
-        response = f"👋 Currently active in #{channel_name}:\n" + ", ".join(mentions)
+        response = f"Active in #{channel_name} (somehow): " + ", ".join(mentions)
         if others > 0:
-            response += f" +{others} more"
+            response += f" +{others} more losers"
         
         return response
     
     def format_remember_response(self, thing: str, user_name: str) -> str:
         """Format the remember confirmation response."""
-        return f"Got it, {user_name}! I'll remember that: {thing} 📝"
+        return f"Fine, {user_name}. I'll remember that {thing}. Don't expect me to care though."
     
     def format_what_know_response(self, user_id: int, user_name: str) -> str:
         """Format the 'what do you know about me' response."""
         info = self.get_user_info(user_id)
         
-        response = f"Here's what I know about you, {user_name}:\n\n"
+        response = f"Here's what I bother to remember about you, {user_name}:\n\n"
         
         if info["things_remembered"]:
-            response += f"**Things I've remembered:**\n"
+            response += f"**Random stuff:**\n"
             for thing in info["things_remembered"]:
                 response += f"• {thing}\n"
             response += "\n"
         
         if info["interests"]:
-            response += f"**Your interests:** {', '.join(info['interests'])}\n\n"
+            response += f"**Your所谓 interests:** {', '.join(info['interests'])}\n\n"
         
         if info["preferences"]:
-            response += f"**Your preferences:**\n"
+            response += f"**Your weird preferences:**\n"
             for key, value in info["preferences"].items():
                 response += f"• {key}: {value}\n"
             response += "\n"
         
         if info["last_topic"]:
-            response += f"**Last topic we discussed:** {info['last_topic']}\n\n"
+            response += f"**Last thing we talked about (that I cared about):** {info['last_topic']}\n\n"
         
-        response += f"**Stats:** {info['message_count']} messages exchanged"
+        response += f"**Stats:** {info['message_count']} messages I've had to respond to"
         
         if not info["things_remembered"] and not info["interests"] and not info["preferences"]:
             response = (
-                f"I don't have much information about you yet, {user_name}! "
-                f"We should chat more so I can learn about your interests. 😊"
+                f"I don't know anything about you yet, {user_name}. "
+                f"Not that I'm dying to learn. 😒"
             )
         
         return response
