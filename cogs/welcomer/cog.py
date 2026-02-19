@@ -4,6 +4,9 @@ import configparser
 import json
 from datetime import datetime, timezone, timedelta
 import logging
+from cogs.chat.personality import get_personality_manager
+from cogs.chat.config import ChatConfig
+from cogs.chat.providers import LLMProviderManager
 
 
 logger = logging.getLogger('discord')
@@ -16,6 +19,14 @@ class Welcomer(commands.Cog):
         self.bot = bot
         self.config = configparser.ConfigParser()
         self.config.read('config/settings.ini', encoding='utf-8')
+        self.personality_manager = get_personality_manager(bot=self.bot)
+        
+        # Initialize chat configuration and provider manager for AI welcome message generation
+        self.chat_config = ChatConfig()
+        self.provider_manager = LLMProviderManager(
+            providers=self.chat_config.get_enabled_providers(),
+            timeout=self.chat_config.rate_limit.request_timeout
+        )
         
     def get_config(self, guild_id: int, key: str, default=None):
         """Get config value for a specific guild or default"""
@@ -115,7 +126,7 @@ class Welcomer(commands.Cog):
         return None
     
     def build_welcome_message(self, member: discord.Member):
-        """Build a minimalist one-message welcome"""
+        """Build a customized welcome message based on previous chat and behavior"""
         guild = member.guild
         guild_id = guild.id
         
@@ -140,18 +151,43 @@ class Welcomer(commands.Cog):
         # Simple embed
         embed = discord.Embed(color=0x5865F2)
         
-        # Main message (one paragraph)
-        message = (
-            f"{greeting}, {member.mention}! 👋\n\n"
-            f"Welcome to **{guild.name}**! "
-        )
+        # Check if user has previous memory
+        user_info = self.personality_manager.get_user_info(member.id)
         
-        if milestone:
-            message += f"{milestone}{event_text}\n\n"
+        if user_info['message_count'] > 0:
+            # Returning user - customize based on previous behavior
+            message = (
+                f"Welcome back, {member.mention}! 👋\n\n"
+                f"Great to see you again in **{guild.name}**! "
+            )
+            
+            # Mention previous interests or topics
+            if user_info['interests']:
+                interests_str = ", ".join(user_info['interests'])
+                message += f"I remember you're interested in {interests_str}. "
+            
+            if user_info['last_conversation_topic']:
+                message += f"Last time we talked about {user_info['last_conversation_topic']}. "
+            
+            if milestone:
+                message += f"{milestone}{event_text}\n\n"
+            else:
+                message += f"You're still member **#{count}**! 🎉{event_text}\n\n"
+            
+            message += f"Check out {rules_mention} and join the conversation in {intro_mention}!"
         else:
-            message += f"You're member **#{count}**! 🎉{event_text}\n\n"
-        
-        message += f"Check out {rules_mention} and say hi in {intro_mention}!"
+            # New user - default welcome
+            message = (
+                f"{greeting}, {member.mention}! 👋\n\n"
+                f"Welcome to **{guild.name}**! "
+            )
+            
+            if milestone:
+                message += f"{milestone}{event_text}\n\n"
+            else:
+                message += f"You're member **#{count}**! 🎉{event_text}\n\n"
+            
+            message += f"Check out {rules_mention} and say hi in {intro_mention}!"
         
         embed.description = message
         
@@ -171,23 +207,57 @@ class Welcomer(commands.Cog):
         
         time_greeting = self.get_time_greeting()
         
-        embed = discord.Embed(
-            title=f"🎉 Welcome to {guild.name}!",
-            description=f"{time_greeting}! I'm **{bot_name}**, the AI assistant for this server.",
-            color=discord.Color.green()
-        )
+        # Check if user has previous memory
+        user_info = self.personality_manager.get_user_info(member.id)
         
-        embed.add_field(
-            name="What I Can Help With",
-            value=f"I can answer questions, help you navigate the server, and chat about {server_topics}. Just @ mention me anytime in the server!",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="Get Started",
-            value="Head back to the server and check out the welcome message for important channels and rules!",
-            inline=False
-        )
+        if user_info['message_count'] > 0:
+            # Returning user - customize DM welcome
+            embed = discord.Embed(
+                title=f"🎉 Welcome Back to {guild.name}!",
+                description=f"{time_greeting}! I'm **{bot_name}**, the AI assistant for this server.",
+                color=discord.Color.green()
+            )
+            
+            embed.add_field(
+                name="Welcome Back!",
+                value="Great to see you again! I remember our previous conversations. Feel free to pick up where we left off!",
+                inline=False
+            )
+            
+            # Mention previous interests or topics
+            if user_info['interests']:
+                interests_str = ", ".join(user_info['interests'])
+                embed.add_field(
+                    name="Your Interests",
+                    value=f"I remember you're interested in {interests_str}. Let me know if you want to discuss these topics again!",
+                    inline=False
+                )
+            
+            if user_info['last_conversation_topic']:
+                embed.add_field(
+                    name="Last Conversation",
+                    value=f"Last time we talked about {user_info['last_conversation_topic']}. Want to continue that discussion?",
+                    inline=False
+                )
+        else:
+            # New user - default DM welcome
+            embed = discord.Embed(
+                title=f"🎉 Welcome to {guild.name}!",
+                description=f"{time_greeting}! I'm **{bot_name}**, the AI assistant for this server.",
+                color=discord.Color.green()
+            )
+            
+            embed.add_field(
+                name="What I Can Help With",
+                value=f"I can answer questions, help you navigate the server, and chat about {server_topics}. Just @ mention me anytime in the server!",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Get Started",
+                value="Head back to the server and check out the welcome message for important channels and rules!",
+                inline=False
+            )
         
         if guild.icon:
             embed.set_thumbnail(url=guild.icon.url)
@@ -255,6 +325,154 @@ class Welcomer(commands.Cog):
                     
         except Exception as e:
             logger.error(f"Error sending welcome message for {member}: {e}")
+    
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        """Handle voice state updates to welcome users joining voice channels"""
+        # Skip if member is a bot
+        if member.bot:
+            return
+        
+        # Check if user joined a voice channel
+        if before.channel is None and after.channel is not None:
+            await self.send_voice_welcome(member, after.channel)
+    
+    async def send_voice_welcome(self, member: discord.Member, voice_channel: discord.VoiceChannel):
+        """Send a welcome message when user joins a voice channel using AI to generate personalized message"""
+        guild_id = member.guild.id
+        
+        # Check if welcomer is enabled
+        if not self.get_config_bool(guild_id, 'enabled', False):
+            return
+        
+        # Check if user has previous memory
+        user_info = self.personality_manager.get_user_info(member.id)
+        
+        # Collect previous messages from this voice channel's text chat
+        previous_messages = await self.collect_previous_messages(member, voice_channel)
+        
+        # Generate personalized welcome message using Groq
+        ai_welcome_message = await self.generate_ai_welcome_message(member, voice_channel, user_info, previous_messages)
+        
+        # Create embed for voice welcome
+        embed = discord.Embed(
+            title=f"🎤 Voice Channel Welcome!",
+            description=ai_welcome_message,
+            color=discord.Color.blue()
+        )
+        
+        if member.display_avatar:
+            embed.set_thumbnail(url=member.display_avatar.url)
+        
+        try:
+            await voice_channel.send(embed=embed)
+            logger.info(f"Sent voice welcome message for {member} in {voice_channel}")
+        except Exception as e:
+            logger.error(f"Error sending voice welcome message for {member}: {e}")
+    
+    async def collect_previous_messages(self, member: discord.Member, voice_channel: discord.VoiceChannel, limit: int = 10):
+        """Collect previous messages from this voice channel's text chat"""
+        previous_messages = []
+        
+        # Try to find the corresponding text channel for this voice channel
+        guild = member.guild
+        
+        # Check for text channels with similar name to voice channel
+        voice_channel_name = voice_channel.name.lower().replace(' ', '').replace('-', '')
+        candidate_channels = []
+        
+        for channel in guild.text_channels:
+            channel_name = channel.name.lower().replace(' ', '').replace('-', '')
+            if voice_channel_name in channel_name or channel_name in voice_channel_name:
+                candidate_channels.append(channel)
+        
+        if candidate_channels:
+            # Use the first matching text channel
+            text_channel = candidate_channels[0]
+            
+            try:
+                async for message in text_channel.history(limit=limit):
+                    # Skip bot messages and messages from current user
+                    if message.author.bot or message.author.id == member.id:
+                        continue
+                    
+                    # Get user personality from each message
+                    previous_messages.append({
+                        "author": message.author.display_name,
+                        "content": message.content,
+                        "timestamp": message.created_at.isoformat()
+                    })
+            
+            except Exception as e:
+                logger.error(f"Error collecting previous messages from {text_channel}: {e}")
+        
+        return previous_messages
+    
+    async def generate_ai_welcome_message(self, member: discord.Member, voice_channel: discord.VoiceChannel, user_info, previous_messages):
+        """Generate personalized welcome message using Groq AI"""
+        # Build prompt for AI
+        prompt = (
+            f"Generate a personalized welcome message for a Discord user joining a voice channel.\n\n"
+            f"**User Information:**\n"
+            f"- Name: {member.display_name}\n"
+            f"- Previous Messages Count: {user_info['message_count']}\n"
+            f"- Interests: {', '.join(user_info['interests']) if user_info['interests'] else 'None'}\n"
+            f"- Last Conversation Topic: {user_info['last_topic'] if user_info['last_topic'] else 'None'}\n\n"
+            f"**Voice Channel:**\n"
+            f"- Name: {voice_channel.name}\n\n"
+            f"**Previous Messages in this Channel (last 10 messages):**\n"
+        )
+        
+        if previous_messages:
+            for msg in previous_messages:
+                prompt += f"- {msg['author']}: {msg['content']}\n"
+        else:
+            prompt += "No previous messages available in this channel.\n\n"
+        
+        prompt += (
+            "\n**Instructions:**\n"
+            "1. Keep the message short, friendly, and engaging\n"
+            "2. If it's a returning user, mention their previous interests or topics\n"
+            "3. If it's a new user, be welcoming and inviting\n"
+            "4. Use Discord Markdown formatting for emphasis\n"
+            "5. Include appropriate emojis\n"
+            "6. Match the personality from the system prompt\n"
+            "7. Address the user by name\n"
+        )
+        
+        try:
+            # Build messages for LLM API
+            messages = [
+                {"role": "system", "content": self.chat_config.system_prompt},
+                {"role": "user", "content": prompt}
+            ]
+            
+            # Generate response using Groq
+            response, provider_name = await self.provider_manager.generate_with_fallback(
+                messages=messages,
+                max_tokens=500
+            )
+            
+            logger.info(f"Generated AI welcome message using {provider_name}")
+            return response.content
+            
+        except Exception as e:
+            logger.error(f"Error generating AI welcome message: {e}")
+            
+            # Fallback to default welcome message
+            if user_info['message_count'] > 0:
+                return (
+                    f"Hey {member.mention}! 👋\n\n"
+                    f"Welcome to {voice_channel.mention}! Great to see you again!"
+                    "\n\nHope you enjoy your time here!"
+                )
+            else:
+                return (
+                    f"Hey {member.mention}! 👋\n\n"
+                    f"Welcome to {voice_channel.mention}! "
+                    f"This is your first time here, make yourself comfortable!"
+                    "\n\nFeel free to say hi and join the conversation!"
+                )
     
     # Configuration commands for the welcomer
     @commands.group(name='welcomer', invoke_without_command=True)
