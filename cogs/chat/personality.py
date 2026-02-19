@@ -228,13 +228,13 @@ class PersonalityManager:
     
     def format_remember_response(self, thing: str, user_name: str) -> str:
         """Format the remember confirmation response."""
-        return f"Fine, {user_name}. I'll remember that {thing}. Don't expect me to care though."
+        return f"Fine, @{user_name}. I'll remember that {thing}. Don't expect me to care though."
     
     def format_what_know_response(self, user_id: int, user_name: str) -> str:
         """Format the 'what do you know about me' response."""
         info = self.get_user_info(user_id)
         
-        response = f"Here's what I bother to remember about you, {user_name}:\n\n"
+        response = f"Here's what I bother to remember about you, @{user_name}:\n\n"
         
         if info["things_remembered"]:
             response += f"**Random stuff:**\n"
