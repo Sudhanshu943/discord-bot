@@ -14,7 +14,7 @@ Structure:
   - search_manager.py: Multi-platform search functionality
 """
 
-from .music import Music
+from .cog import Music
 
 __all__ = ['Music']
 
