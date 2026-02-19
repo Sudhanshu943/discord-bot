@@ -8,6 +8,7 @@ Includes Discord user permission checking and role hierarchy analysis.
 
 import json
 import time
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field, asdict
@@ -204,13 +205,15 @@ class PersonalityManager:
     def format_help_response(self, user_name: str) -> str:
         """Format the help response."""
         return (
-            f"Hey @{user_name}. I'm here to respond with clearity and short answers. "
+            f"Hey @{user_name}. I'm here to help you with work and music. "
             f"Use `/ask` or `/chat`, or just mention me.\n\n"
             f"**Commands:**\n"
-            f"• `who's online` - See active users (if anyone's actually here)\n"
-            f"• `remember [something]` - I'll 'remember' that (no promises)\n"
-            f"• `what do you know about me` - See if I bother to recall anything\n\n"
-            f"Don't expect too much. 😉"
+            f"• `who's online` - See active users\n"
+            f"• `remember [something]` - I'll remember that\n"
+            f"• `play [song name]` - I'll play the song for you\n"
+            f"• `recommend songs` - Get song recommendations\n"
+            f"• `what do you know about me` - View your info\n\n"
+            f"I'm also here to help with work! 😊"
         )
     
     def format_whos_online_response(self, members: List[discord.Member], channel_name: str) -> str:
@@ -295,35 +298,77 @@ class PersonalityManager:
                          "tell me about me", "my info"]:
             return self.format_what_know_response(user_id, user_name)
         
-        # Music-related commands
+        # Music-related commands - JSON format responses
+        if any(keyword in msg_lower for keyword in ["recommend songs", "song recommendation", "suggest songs", "recommend me songs"]):
+            import random
+            songs = [
+                "Blinding Lights - The Weeknd",
+                "Shape of You - Ed Sheeran",
+                "Uptown Funk - Mark Ronson",
+                "Dance Monkey - Tones and I",
+                "Watermelon Sugar - Harry Styles"
+            ]
+            recommended = random.sample(songs, 3)
+            songs_list = ", ".join(recommended)
+            queries_list = ", ".join([f">> {s}" for s in recommended])
+            json_response = {
+                "person": user_name,
+                "action": "recommending",
+                "chat": f"Here are some songs you might like:",
+                "song": songs_list,
+                "query": queries_list
+            }
+            return f"```json\n{json.dumps(json_response, indent=2)}\n```"
+        
+        if any(keyword in msg_lower for keyword in ["play", "baja de", "sunao", "suna de", "sun le", "play song"]):
+            # Extract song name from the message
+            song_name = ""
+            patterns = [
+                r"play\s+(.+?)$",
+                r"baja\s+(.+?)$",
+                r"sunao\s+(.+?)$",
+                r"suna\s+de\s+(.+?)$",
+                r"sun\s+le\s+(.+?)$"
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, msg_lower)
+                if match:
+                    song_name = match.group(1).strip()
+                    break
+            
+            if not song_name:
+                # Default song
+                song_name = "Kala Chashma"
+            
+            json_response = {
+                "person": user_name,
+                "action": "playing",
+                "chat": f"Playing {song_name.title()}",
+                "song": song_name.title(),
+                "query": f">> {song_name}"
+            }
+            return f"```json\n{json.dumps(json_response, indent=2)}\n```"
+        
+        # Trending songs
         if any(keyword in msg_lower for keyword in ["trending song", "trending songs", "top song", "top songs", "latest song"]):
-            return (
-                f"Arre {user_name}, tu toh bewakoof hai! Trending songs? Yahan kuch naya nahi hota. "
-                f"Lekin dekh le ye gaane abhi chal rahe hain:\n>> Kala Chashma\n>> Lungi Dance"
-            )
-        
-        if any(keyword in msg_lower for keyword in ["party song", "dance song", "dance music"]):
-            return (
-                f"{user_name} ke liye party songs? Tu toh apni gaadi mein hi dance karta hai! "
-                f"Chal dekh le ye:\n>> Lungi Dance\n>> Kala Chashma\n>> Baby Doll"
-            )
-        
-        if any(keyword in msg_lower for keyword in ["sad song", "romantic song", "love song"]):
-            return (
-                f"{user_name} rone wala hai? Romantic songs sunke kya kar lega? "
-                f"Lekin ye lo:\n>> Tum Hi Ho\n>> Samjhawan\n>> Raabta"
-            )
-        
-        if any(keyword in msg_lower for keyword in ["punjabi song", "punjabi music"]):
-            return (
-                f"{user_name} ko Punjabi songs pasand hain? Tu toh Sirf Ludo khelta hai! "
-                f"Chal ye lo:\n>> Brown Munde\n>> Laung Laachi\n>> High Rated Gabru"
-            )
-        
-        if any(keyword in msg_lower for keyword in ["baja de", "sunao", "play", "suna de", "sun le"]):
-            return (
-                f"{user_name}, teri bezzati karne ke liye nahin banaya gaya, phir bhi ek gaana sunaunga - >> Kala Chashma ab sun le varna teri aukaat nahin hai mujhse demand karni."
-            )
+            import random
+            trending = [
+                "Flow - Flow",
+                "Peaches - Justin Bieber",
+                "Bad Habits - Ed Sheeran",
+                "Stay - The Kid LAROI"
+            ]
+            recommended = random.sample(trending, 3)
+            songs_list = ", ".join(recommended)
+            queries_list = ", ".join([f">> {s}" for s in recommended])
+            json_response = {
+                "person": user_name,
+                "action": "trending",
+                "chat": f"Here are trending songs:",
+                "song": songs_list,
+                "query": queries_list
+            }
+            return f"```json\n{json.dumps(json_response, indent=2)}\n```"
         
         return None
     

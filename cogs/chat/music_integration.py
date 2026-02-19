@@ -13,7 +13,9 @@ Features:
 import logging
 import re
 import random
-from typing import List, Optional, Dict, Any
+import json
+import asyncio
+from typing import List, Optional, Dict, Any, Tuple
 import discord
 from dataclasses import dataclass, field
 
@@ -227,6 +229,120 @@ class MusicIntegration:
         
         message = message.lower()
         return any(keyword in message for keyword in music_keywords)
+    
+    async def format_json_recommendation(self, user_id: int, context: str = "", mood: str = None) -> str:
+        """
+        Format song recommendations in JSON format
+        """
+        recommendations = await self.recommend_songs(user_id, context, mood)
+        
+        json_response = {
+            "type": "song_recommendations",
+            "message": "Here are some songs you might like:",
+            "songs": recommendations[:3],
+            "play_all": f">> {recommendations[0]}" if recommendations else None
+        }
+        
+        return f"```json\n{json.dumps(json_response, indent=2)}\n```"
+    
+    async def format_json_play_response(self, song_name: str, success: bool = True) -> str:
+        """
+        Format play response in JSON format
+        """
+        if success:
+            json_response = {
+                "type": "play_song",
+                "status": "playing",
+                "song": song_name.title(),
+                "query": f">> {song_name}"
+            }
+        else:
+            json_response = {
+                "type": "play_song",
+                "status": "error",
+                "song": song_name.title(),
+                "message": "Could not find or play the song"
+            }
+        
+        return f"```json\n{json.dumps(json_response, indent=2)}\n```"
+    
+    def extract_songs_from_json(self, text: str) -> List[str]:
+        """
+        Extract song names from JSON format responses
+        """
+        songs = []
+        
+        # Try to find JSON blocks
+        json_pattern = r'```json\s*(.*?)\s*```'
+        matches = re.findall(json_pattern, text, re.DOTALL)
+        
+        for match in matches:
+            try:
+                data = json.loads(match)
+                
+                # Check for different JSON formats
+                if isinstance(data, dict):
+                    # Type 1: songs array
+                    if 'songs' in data and isinstance(data['songs'], list):
+                        songs.extend(data['songs'])
+                    # Type 2: song field
+                    if 'song' in data:
+                        songs.append(data['song'])
+                    # Type 3: query field (for play)
+                    if 'query' in data:
+                        query = data['query']
+                        if query.startswith('>>'):
+                            songs.append(query[2:].strip())
+                    # Type 4: play_all field
+                    if 'play_all' in data:
+                        play_all = data['play_all']
+                        if play_all.startswith('>>'):
+                            songs.append(play_all[2:].strip())
+            except json.JSONDecodeError:
+                continue
+        
+        return songs
+    
+    def extract_songs_from_text(self, text: str) -> List[str]:
+        """
+        Extract song names from text (both >> format and JSON)
+        """
+        songs = []
+        
+        # First try JSON format
+        json_songs = self.extract_songs_from_json(text)
+        if json_songs:
+            return json_songs
+        
+        # Then try >> format
+        song_pattern = r'>>\s*(.+?)(?:\n|$)'
+        matches = re.findall(song_pattern, text)
+        songs.extend([s.strip() for s in matches])
+        
+        return songs
+    
+    async def play_multiple_songs(self, ctx, song_queries: List[str]) -> Tuple[int, List[str]]:
+        """
+        Play multiple songs one by one
+        Returns: (success_count, list of results)
+        """
+        success_count = 0
+        results = []
+        
+        for query in song_queries:
+            if not query.strip():
+                continue
+                
+            success, response = await self.search_and_play(ctx, query.strip())
+            results.append(response)
+            
+            if success:
+                success_count += 1
+            
+            # Small delay between songs to avoid rate limiting
+            await asyncio.sleep(0.5)
+        
+        return success_count, results
     
     async def get_music_player(self, guild: discord.Guild):
         """Get the music player from the music cog"""

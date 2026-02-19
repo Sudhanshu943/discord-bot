@@ -15,6 +15,7 @@ import logging
 import asyncio
 import time
 import re
+import json
 from datetime import datetime
 
 from .config import ChatConfig
@@ -864,6 +865,47 @@ class AIChat(commands.Cog):
                 await message.reply(special_response, mention_author=False)
             return
         
+        # Check for music play request in user's message (JSON format request)
+        msg_lower = content.lower().strip()
+        
+        # Check if user wants to play a specific song
+        play_song_match = None
+        play_patterns = [
+            r'play\s+(.+)',
+            r'play\s+song\s+(.+)',
+            r'baja\s+(.+)',
+            r'sunao\s+(.+)',
+            r'suna\s+de\s+(.+)'
+        ]
+        for pattern in play_patterns:
+            match = re.match(pattern, msg_lower)
+            if match:
+                play_song_match = match.group(1).strip()
+                break
+        
+        # If user is requesting to play a song
+        if play_song_match:
+            # Send JSON format response and play the song
+            json_response = {
+                "person": message.author.name,
+                "action": "playing",
+                "chat": f"Playing {play_song_match.title()}",
+                "song": play_song_match.title(),
+                "query": f">> {play_song_match}"
+            }
+            response_text = f"```json\n{json.dumps(json_response, indent=2)}\n```"
+            
+            # Print ALL responses to terminal in JSON format
+            logger.info(f"📥 IN: {content}")
+            logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
+            
+            await message.reply(response_text, mention_author=False)
+            
+            # Play the song
+            success, play_response = await self.music_integration.search_and_play(message, play_song_match)
+            await message.reply(play_response, mention_author=False)
+            return
+        
         # Update user activity in personality manager
         self.personality_manager.update_activity(message.author.id)
         
@@ -915,14 +957,61 @@ class AIChat(commands.Cog):
             else:
                 response_text = response
 
-
-            # Handle long responses
-            if len(response_text) > 2000:
-                chunks = self._split_message(response_text, 2000)
-                for chunk in chunks:
-                    await message.reply(chunk, mention_author=False)
+            # Check for song recommendations in AI response (JSON format or >> format)
+            song_recommendations = self.music_integration.extract_songs_from_text(response_text)
+            
+            if song_recommendations:
+                # Format response in new JSON structure
+                songs_list = ", ".join([s.strip() for s in song_recommendations])
+                queries_list = ", ".join([f">> {s.strip()}" for s in song_recommendations])
+                
+                json_response = {
+                    "person": message.author.name,
+                    "action": "playing",
+                    "chat": response[:500] if len(response) > 500 else response,
+                    "song": songs_list,
+                    "query": queries_list
+                }
+                response_text = f"```json\n{json.dumps(json_response, indent=2)}\n```"
+                
+                # Print ALL responses to terminal in JSON format
+                logger.info(f"📥 IN: {content}")
+                logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
+                
+                # Send the JSON response
+                if len(response_text) > 2000:
+                    chunks = self._split_message(response_text, 2000)
+                    for chunk in chunks:
+                        await message.reply(chunk, mention_author=False)
+                else:
+                    await message.reply(response_text, mention_author=False)
+                
+                # Play the recommended songs one by one
+                for song_query in song_recommendations:
+                    if song_query.strip():
+                        success, play_response = await self.music_integration.search_and_play(message, song_query.strip())
+                        await message.reply(play_response, mention_author=False)
             else:
-                await message.reply(response_text, mention_author=False)
+                # No song recommendations - format as JSON anyway
+                json_response = {
+                    "person": message.author.name,
+                    "action": "chat",
+                    "chat": response[:500] if len(response) > 500 else response,
+                    "song": "",
+                    "query": ""
+                }
+                
+                # Print ALL responses to terminal in JSON format
+                logger.info(f"📥 IN: {content}")
+                logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
+                
+                # Handle long responses
+                if len(response_text) > 2000:
+                    chunks = self._split_message(response_text, 2000)
+                    for chunk in chunks:
+                        await message.reply(chunk, mention_author=False)
+                else:
+                    await message.reply(response_text, mention_author=False)
 
         except RateLimitException as e:
             await message.reply(
