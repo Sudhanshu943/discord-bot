@@ -10,7 +10,7 @@ This module provides a production-ready chatbot system with:
 - Modular and extensible architecture
 """
 
-from .chat import AIChat, setup
+from .cog import AIChat, setup
 from .providers import LLMProviderManager
 from .context import ConversationManager
 from .rate_limiter import RateLimiter

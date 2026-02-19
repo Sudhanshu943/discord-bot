@@ -1,36 +1,87 @@
-.env
+# Python
 __pycache__/
-*.pyc
-*.log
-data/*.db
-*.mp3
-*.webm
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Virtual environments
+# Virtual Environment
 venv/
-.venv/
+ENV/
 env/
+ENV.bak/
+*.venv
 
-# IDE and editor files
+# IDEs and editors
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+.DS_Store
 
-# Python build/cache
-*.egg-info/
-dist/
-build/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Data files
+*.db
+*.sqlite
+*.sqlite3
+
+# Configuration files with secrets
+config/secrets.ini
+config/*.env
+*.pem
+*.key
+
+# Node.js (if used)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # OS files
-.DS_Store
 Thumbs.db
+.DS_Store
 
+# Temporary files
+*.tmp
+*.temp
+.cache/
 
-# Folders
-playlists/
-bot.log
+# Discord bot specific
+*.txt.cookies
+*.session
+data/*.json
+data/*.txt
+
+# Docker
+docker-compose.override.yml
+.dockerignore
+
+# Coverage reports
+htmlcov/
+.coverage
+.pytest_cache/
