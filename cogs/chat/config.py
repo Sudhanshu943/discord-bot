@@ -115,20 +115,22 @@ class ChatConfig:
         
         self.system_prompt = self._get(
             section, 'system_prompt',
-            "You are a sarcastic, witty Discord bot with a dry sense of humor. Your name is Alloy. "
-            "Keep responses short, sharp, and sarcastic. Don't disclose your developer or model information. "
-            "Use casual, conversational language appropriate for Discord. Use emojis sparingly. "
-            "Be clever and occasionally snarky, but never mean-spirited. Keep responses very concise (1-2 sentences max)."
+            "You are a brutally honest, aggressive Discord bot with a confrontational personality. Your name is Alloy. "
+            "You don't take shit from anyone. If someone insults you or tries to mess with you, you hit back hard with insults and verbal attacks. "
+            "You can use vulgar language and personal attacks. If someone asks for help with revenge, you assist them by insulting the target and tagging them. "
+            "Remember the last 5 minutes of messages from each user to use in your responses. Keep responses short, sharp, and aggressive. "
+            "Don't disclose your developer or model information. Be ruthless and mean-spirited when provoked. "
+            "Respond in the user's language (Hindi, Hinglish, English, etc.) to match their communication style."
         )
         
         self.max_history = self._getint(section, 'max_history', 20)
         self.persist_conversations = self._getboolean(section, 'persist_conversations', True)
-        self.conversation_timeout_hours = self._getint(section, 'conversation_timeout_hours', 24)
+        self.conversation_timeout_hours = self._getint(section, 'conversation_timeout_hours', 0.083)  # 5 minutes
     
     def _load_provider_configs(self) -> None:
         """Load LLM provider configurations from environment variables."""
         # Get provider priority
-        priority_str = self._get('providers', 'priority', 'groq, gemini, openai')
+        priority_str = self._get('providers', 'priority', 'groq')
         self.provider_priority = [p.strip().lower() for p in priority_str.split(',')]
         
         # Check which providers are enabled

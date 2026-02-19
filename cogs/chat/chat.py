@@ -600,10 +600,10 @@ class AIChat(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """
-        Listen for messages in dedicated chat channels OR mentions.
+        Listen for ALL messages in dedicated chat channels OR mentions.
 
         Users can:
-        1. Chat directly in dedicated channels (no commands/tags needed)
+        1. Chat directly in dedicated channels (no commands/tags needed - ALL messages are processed)
         2. Mention the bot anywhere
         3. Reply to bot messages
         """
@@ -632,7 +632,7 @@ class AIChat(commands.Cog):
             message.reference.resolved.author.id == self.bot.user.id
         )
 
-        # Process if: dedicated channel OR mentioned OR reply to bot
+        # Process if: dedicated channel (ALL messages) OR mentioned OR reply to bot
         if not (is_dedicated_channel or bot_mentioned or is_reply_to_bot):
             return
 
