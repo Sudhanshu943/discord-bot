@@ -11,8 +11,6 @@ This module provides a production-ready chatbot system with:
 """
 
 from .cog import AIChat, setup
-from .providers import LLMProviderManager
-from .context import ConversationManager
 from .rate_limiter import RateLimiter
 from .config import ChatConfig
 from .exceptions import (
@@ -25,8 +23,6 @@ from .exceptions import (
 __all__ = [
     'AIChat',
     'setup',
-    'LLMProviderManager',
-    'ConversationManager',
     'RateLimiter',
     'ChatConfig',
     'ChatException',

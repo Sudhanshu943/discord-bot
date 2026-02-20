@@ -6,7 +6,6 @@ from datetime import datetime, timezone, timedelta
 import logging
 from cogs.chat.personality import get_personality_manager
 from cogs.chat.config import ChatConfig
-from cogs.chat.providers import LLMProviderManager
 
 
 logger = logging.getLogger('discord')
@@ -21,12 +20,8 @@ class Welcomer(commands.Cog):
         self.config.read('config/settings.ini', encoding='utf-8')
         self.personality_manager = get_personality_manager(bot=self.bot)
         
-        # Initialize chat configuration and provider manager for AI welcome message generation
+        # Initialize chat configuration
         self.chat_config = ChatConfig()
-        self.provider_manager = LLMProviderManager(
-            providers=self.chat_config.get_enabled_providers(),
-            timeout=self.chat_config.rate_limit.request_timeout
-        )
         
     def get_config(self, guild_id: int, key: str, default=None):
         """Get config value for a specific guild or default"""
@@ -441,20 +436,36 @@ class Welcomer(commands.Cog):
         )
         
         try:
-            # Build messages for LLM API
+            # Build messages for Groq API
             messages = [
                 {"role": "system", "content": self.chat_config.system_prompt},
                 {"role": "user", "content": prompt}
             ]
             
-            # Generate response using Groq
-            response, provider_name = await self.provider_manager.generate_with_fallback(
-                messages=messages,
-                max_tokens=500
-            )
-            
-            logger.info(f"Generated AI welcome message using {provider_name}")
-            return response.content
+            # Generate response using Groq via chat service
+            try:
+                from groq import AsyncGroq
+                import os
+                
+                # Get Groq API key from environment (loaded via .env in bot startup)
+                groq_key = os.getenv('GROQ_API_KEY_1') or os.getenv('GROQ_API_KEY')
+                if not groq_key:
+                    raise ValueError("No Groq API key available")
+                
+                client = AsyncGroq(api_key=groq_key)
+                response = await client.chat.completions.create(
+                    model="mixtral-8x7b-32768",
+                    messages=messages,
+                    max_tokens=500,
+                    temperature=0.7
+                )
+                
+                logger.info(f"Generated AI welcome message using Groq")
+                return response.choices[0].message.content
+                
+            except ImportError:
+                logger.warning("Groq module not available")
+                raise
             
         except Exception as e:
             logger.error(f"Error generating AI welcome message: {e}")

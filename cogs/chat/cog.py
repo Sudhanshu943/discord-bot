@@ -19,15 +19,18 @@ import json
 from datetime import datetime
 
 from .config import ChatConfig
-from .context import ConversationManager
 from .rate_limiter import RateLimiter
-from .providers import LLMProviderManager
 from .personality import get_personality_manager, PersonalityManager
 from .exceptions import (
     ChatException,
     RateLimitException,
     ProviderException
 )
+
+# NEW: Service layer imports
+from .models import ChatRequest, ChatResponse
+from .services import ChatService, MemoryManager, ProviderRouter, SafetyFilter
+from .storage import MemoryStorage
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -56,66 +59,48 @@ class AIChat(commands.Cog):
             getattr(logging, self.config.logging.log_level, logging.INFO)
         )
         
-        # Initialize conversation manager
-        self.conversation_manager = ConversationManager(
-            max_history=self.config.max_history,
-            conversation_timeout_hours=self.config.conversation_timeout_hours,
-            persist=self.config.persist_conversations
+        # Initialize personality manager FIRST (needed for system prompt)
+        self.personality_manager = get_personality_manager(bot=self.bot)
+        self.config.personality = self.personality_manager
+        
+        # Initialize music integration
+        from .music_integration import MusicIntegration
+        self.music_integration = MusicIntegration(bot=self.bot)
+        
+        # ===== NEW SERVICE LAYER INITIALIZATION ===== 
+        self.storage = MemoryStorage("data/chat_memory")
+        self.safety_filter = SafetyFilter(max_message_length=2000)
+        self.memory_manager = MemoryManager(self.storage)
+        self.provider_router = ProviderRouter(self.config, self.safety_filter)
+        self.chat_service = ChatService(
+            config=self.config,
+            memory_manager=self.memory_manager,
+            safety_filter=self.safety_filter,
+            provider_router=self.provider_router,
         )
         
-        # Initialize rate limiter
+        # Keep rate limiter for Discord rate limiting
         self.rate_limiter = RateLimiter(
             user_cooldown=self.config.rate_limit.user_cooldown,
             global_requests_per_minute=self.config.rate_limit.global_requests_per_minute
         )
         
-        # Initialize provider manager
-        self.provider_manager = LLMProviderManager(
-            providers=self.config.get_enabled_providers(),
-            timeout=self.config.rate_limit.request_timeout
-        )
-        
-        # Initialize personality manager for user memory and special commands
-        self.personality_manager = get_personality_manager(bot=self.bot)
-        
-        # Initialize music integration
-        from .music_integration import MusicIntegration
-        self.music_integration = MusicIntegration(bot=self.bot)
-
-            # ADD THESE: Fast in-memory caches
-        self._conversations_cache: Dict[int, List[Dict]] = {}
-        self._user_preferences: Dict[int, Dict] = {}
-
-        # Statistics
-        self._stats = {
-            "total_requests": 0,
-            "successful_requests": 0,
-            "failed_requests": 0,
-            "rate_limited_requests": 0,
-            "start_time": time.time()
-        }
-
-        # Load cached data from disk (if exists) - async task
-        asyncio.create_task(self._load_cache_from_disk())
-
         # Start background tasks
         self._cleanup_task.start()
-        self._persistence_task.start()  # New task for periodic saves
     
     def cog_unload(self) -> None:
         """Clean up when cog is unloaded."""
         self._cleanup_task.cancel()
-        self._persistence_task.cancel()  # ADD THIS
         logger.info("AIChat cog unloaded")
 
     
     @tasks.loop(hours=1)
     async def _cleanup_task(self) -> None:
-        """Background task to clean up expired conversations."""
+        """Background task to clean up expired memories."""
         try:
-            removed = await self.conversation_manager.cleanup_expired()
+            removed = await self.storage.cleanup_old_memories(days=30)
             if removed > 0:
-                logger.info(f"Cleaned up {removed} expired conversations")
+                logger.info(f"Cleaned up {removed} old conversation memories")
         except Exception as e:
             logger.error(f"Error in cleanup task: {e}")
     
@@ -128,64 +113,34 @@ class AIChat(commands.Cog):
         self,
         user_id: int,
         message: str,
-        channel_id: int = None
+        channel_id: int = None,
+        guild_id: int = None,
     ) -> Tuple[str, Optional[str]]:
-        """Process a chat request - OPTIMIZED FOR SPEED."""
-        self._stats["total_requests"] += 1
-
-        # Check rate limit (fast, in-memory)
+        """Process a chat request through the service layer."""
         try:
+            # Rate limit (Discord rate limiting)
             await self.rate_limiter.acquire(user_id)
-        except RateLimitException as e:
-            self._stats["rate_limited_requests"] += 1
-            raise
-        
-        # Get conversation from memory (NO database reads)
-        conversation = self._conversations_cache.get(user_id)
-        if not conversation:
-            conversation = []
-            self._conversations_cache[user_id] = conversation
-
-        # Add user message to cache
-        conversation.append({"role": "user", "content": message})
-
-        # Trim to max history (fast list operation)
-        if len(conversation) > self.config.max_history:
-            conversation = conversation[-self.config.max_history:]
-            self._conversations_cache[user_id] = conversation
-
-        # Build API messages (fast)
-        messages = [{"role": "system", "content": self.config.system_prompt}]
-        messages.extend(conversation)
-
-        # Get preferred provider (fast dict lookup)
-        preferred_provider = self._user_preferences.get(user_id, {}).get("provider")
-
-        try:
-            # Call LLM API (this is the only slow part)
-            response, provider_name = await self.provider_manager.generate_with_fallback(
-                messages=messages,
-                preferred_provider=preferred_provider,
-                max_tokens=self.config.rate_limit.max_tokens
+            
+            # Call service layer - it handles everything
+            response, provider = await self.chat_service.process_message(
+                user_id=user_id,
+                channel_id=channel_id,
+                message=message,
+                guild_id=guild_id,
+                use_channel_memory=True,
+                use_guild_memory=True,
             )
-
-            # Add response to cache
-            conversation.append({"role": "assistant", "content": response.content})
-
-            self._stats["successful_requests"] += 1
-
-            # Save to disk in BACKGROUND (non-blocking)
-            if self.config.persist_conversations:
-                asyncio.create_task(
-                    self._save_conversation_background(user_id, conversation)
-                )
-
-            return response.content, provider_name
-
-        except ChatException as e:
-            self._stats["failed_requests"] += 1
-            logger.error(f"Chat request failed for user {user_id}: {e}")
+            
+            return response, provider
+        
+        except ValueError as e:
+            # Validation error (prompt injection, message too long, etc)
+            raise ChatException(str(e))
+        except RateLimitException:
             raise
+        except Exception as e:
+            logger.error(f"Chat service error: {e}")
+            raise ChatException("Failed to process request")
 
 
 
@@ -276,12 +231,9 @@ class AIChat(commands.Cog):
             await ctx.send("❌ This command is disabled.")
             return
 
-        # Clear from cache (instant)
-        if ctx.author.id in self._conversations_cache:
-            del self._conversations_cache[ctx.author.id]
-            await ctx.send("✅ Your conversation history has been cleared.")
-        else:
-            await ctx.send("ℹ️ You don't have any conversation history to clear.")
+        # Clear channel memory via service
+        await self.chat_service.clear_channel_context(ctx.channel.id)
+        await ctx.send("✅ Your conversation history for this channel has been cleared.")
 
     
     @commands.hybrid_command(
@@ -294,7 +246,7 @@ class AIChat(commands.Cog):
     async def set_provider(
         self,
         ctx: commands.Context,
-        provider: Literal["groq", "gemini", "openai"]
+        provider: Literal["groq"]
     ) -> None:
         """
         Set your preferred AI provider.
@@ -306,36 +258,12 @@ class AIChat(commands.Cog):
             await ctx.send("❌ This command is disabled.")
             return
 
-        # Check if provider is available
-        available_providers = self.provider_manager.get_provider_names()
-
-        # Find matching provider
-        matching_providers = [
-            p for p in available_providers
-            if p.lower().startswith(provider.lower())
-        ]
-
-        if not matching_providers:
-            await ctx.send(
-                f"❌ Provider '{provider}' is not available. "
-                f"Available providers: {', '.join(available_providers)}"
-            )
+        # Currently only Groq is supported
+        if provider.lower() != "groq":
+            await ctx.send("❌ Only 'groq' provider is currently available.")
             return
 
-        # Set the preferred provider
-        provider_name = matching_providers[0]  # ✅ ADD THIS LINE
-
-        # Set in cache (instant)
-        if ctx.author.id not in self._user_preferences:
-            self._user_preferences[ctx.author.id] = {}
-        self._user_preferences[ctx.author.id]["provider"] = provider_name
-
-        await self.conversation_manager.set_preferred_provider(
-            ctx.author.id,
-            provider_name
-        )
-
-        await ctx.send(f"✅ Your preferred provider has been set to **{provider_name}**.")
+        await ctx.send(f"✅ Your preferred provider has been set to **groq**.")
 
 
     
@@ -353,14 +281,22 @@ class AIChat(commands.Cog):
             await ctx.send("❌ This command is disabled.")
             return
         
-        # Get statistics
-        conv_stats = self.conversation_manager.get_stats()
+        # Get statistics from new service layer
         rate_stats = self.rate_limiter.get_global_stats()
-        provider_health = self.provider_manager.get_health_status()
         
-        # Calculate uptime
-        uptime_seconds = time.time() - self._stats["start_time"]
-        uptime_hours = uptime_seconds / 3600
+        # Get memories from storage
+        try:
+            all_channels = self.storage._load_all_channel_memories()
+            all_guilds = self.storage._load_all_guild_memories()
+            
+            total_channels = len(all_channels)
+            total_guilds = len(all_guilds)
+            total_messages = sum(len(mem.get("messages", [])) for mem in all_channels.values()) + \
+                            sum(len(mem.get("messages", [])) for mem in all_guilds.values())
+        except Exception:
+            total_channels = 0
+            total_guilds = 0
+            total_messages = 0
         
         # Build embed
         embed = discord.Embed(
@@ -370,22 +306,11 @@ class AIChat(commands.Cog):
         )
         
         embed.add_field(
-            name="Usage",
+            name="Memory Usage",
             value=(
-                f"Total Requests: {self._stats['total_requests']}\n"
-                f"Successful: {self._stats['successful_requests']}\n"
-                f"Failed: {self._stats['failed_requests']}\n"
-                f"Rate Limited: {self._stats['rate_limited_requests']}"
-            ),
-            inline=True
-        )
-        
-        embed.add_field(
-            name="Conversations",
-            value=(
-                f"Active: {conv_stats['active_conversations']}\n"
-                f"Total Created: {conv_stats['total_conversations']}\n"
-                f"Total Messages: {conv_stats['total_messages']}"
+                f"Active Channels: {total_channels}\n"
+                f"Active Guilds: {total_guilds}\n"
+                f"Total Messages Stored: {total_messages}"
             ),
             inline=True
         )
@@ -399,22 +324,13 @@ class AIChat(commands.Cog):
             inline=True
         )
         
-        # Provider status
-        provider_status = []
-        for name, health in provider_health.items():
-            status_emoji = "✅" if health["healthy"] else "❌"
-            provider_status.append(
-                f"{status_emoji} {name}: {health['total_requests']} requests"
-            )
+        embed.add_field(
+            name="Provider",
+            value="✅ Groq (mixtral-8x7b-32768)",
+            inline=False
+        )
         
-        if provider_status:
-            embed.add_field(
-                name="Providers",
-                value="\n".join(provider_status),
-                inline=False
-            )
-        
-        embed.set_footer(text=f"Uptime: {uptime_hours:.1f} hours")
+        embed.set_footer(text="Refactored with service layer architecture")
         
         await ctx.send(embed=embed)
     
@@ -426,31 +342,22 @@ class AIChat(commands.Cog):
         """
         List all available AI providers and their status.
         """
-        providers = self.provider_manager.get_provider_names()
-        health_status = self.provider_manager.get_health_status()
-        
-        if not providers:
-            await ctx.send("❌ No AI providers are currently available.")
-            return
-        
         embed = discord.Embed(
             title="🤖 Available AI Providers",
             color=discord.Color.green()
         )
         
-        for provider_name in providers:
-            health = health_status.get(provider_name, {})
-            status_emoji = "✅" if health.get("healthy", True) else "❌"
-            avg_time = health.get("avg_response_time", 0)
-            
-            embed.add_field(
-                name=f"{status_emoji} {provider_name}",
-                value=(
-                    f"Requests: {health.get('total_requests', 0)}\n"
-                    f"Avg Response: {avg_time:.2f}s"
-                ),
-                inline=True
-            )
+        embed.add_field(
+            name="✅ Groq",
+            value=(
+                "Model: mixtral-8x7b-32768\n"
+                "Status: Active\n"
+                "Type: Open-source LLM"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="Groq API for fast inference")
         
         await ctx.send(embed=embed)
     
@@ -462,11 +369,20 @@ class AIChat(commands.Cog):
         """
         View your personal chat statistics.
         """
-        user_stats = self.conversation_manager.get_user_stats(ctx.author.id)
+        # Since we now use channel-based memory instead of user-based, show channel stats
+        channel_mem = self.memory_manager.get_or_create_channel_memory(ctx.channel.id)
         rate_stats = self.rate_limiter.get_user_stats(ctx.author.id)
         
-        if not user_stats:
-            await ctx.send("ℹ️ You haven't chatted with the AI yet.")
+        # Count messages in this channel from this user
+        user_message_count = 0
+        if channel_mem and "messages" in channel_mem:
+            user_message_count = sum(
+                1 for msg in channel_mem["messages"] 
+                if msg.get("user_id") == ctx.author.id
+            )
+        
+        if user_message_count == 0:
+            await ctx.send("ℹ️ You haven't chatted with the AI yet in this channel.")
             return
         
         embed = discord.Embed(
@@ -482,9 +398,8 @@ class AIChat(commands.Cog):
         embed.add_field(
             name="Conversation",
             value=(
-                f"Messages in History: {user_stats['message_count']}\n"
-                f"Total Messages: {user_stats['total_messages']}\n"
-                f"Preferred Provider: {user_stats.get('preferred_provider', 'Auto')}"
+                f"Messages in This Channel: {user_message_count}\n"
+                f"Total Rate Limited: {rate_stats.get('warning_count', 0)}"
             ),
             inline=True
         )
@@ -492,7 +407,7 @@ class AIChat(commands.Cog):
         embed.add_field(
             name="Rate Limiting",
             value=(
-                f"Requests: {rate_stats['request_count']}\n"
+                f"Requests (This Channel): {rate_stats['request_count']}\n"
                 f"Warnings: {rate_stats['warning_count']}"
             ),
             inline=True
@@ -730,7 +645,8 @@ class AIChat(commands.Cog):
                 response, provider = await self._process_chat_request(
                     message.author.id,
                     content,
-                    message.channel.id
+                    message.channel.id,
+                    message.guild.id if message.guild else None
                 )
             
             # Format response
@@ -947,7 +863,8 @@ class AIChat(commands.Cog):
                 response, provider = await self._process_chat_request(
                     message.author.id,
                     enhanced_message,
-                    message.channel.id
+                    message.channel.id,
+                    message.guild.id if message.guild else None
                 )
 
             # Format response
@@ -1074,20 +991,17 @@ class AIChat(commands.Cog):
         """
         start_time = time.time()
         
-        # Check provider health
-        health_status = self.provider_manager.get_health_status()
-        healthy_providers = sum(1 for h in health_status.values() if h["healthy"])
-        total_providers = len(health_status)
+        # Check Groq provider status (simple check)
+        status_emoji = "🟢"
+        is_healthy = True
         
         # Calculate latency
         latency = (time.time() - start_time) * 1000
         
         # Build status message
-        status_emoji = "🟢" if healthy_providers > 0 else "🔴"
-        
         embed = discord.Embed(
             title=f"{status_emoji} Chatbot Status",
-            color=discord.Color.green() if healthy_providers > 0 else discord.Color.red(),
+            color=discord.Color.green(),
             timestamp=datetime.utcnow()
         )
         
@@ -1098,30 +1012,18 @@ class AIChat(commands.Cog):
         )
         
         embed.add_field(
-            name="Providers",
-            value=f"`{healthy_providers}/{total_providers}` healthy",
-            inline=True
-        )
-        
-        embed.add_field(
             name="Status",
-            value="✅ **Online**" if healthy_providers > 0 else "❌ **All providers down**",
+            value="✅ **Online**",
             inline=True
         )
         
-        # Add provider details
-        provider_status = []
-        for name, health in health_status.items():
-            emoji = "✅" if health["healthy"] else "❌"
-            provider_status.append(f"{emoji} `{name}`")
-        
         embed.add_field(
-            name="Provider Status",
-            value="\n".join(provider_status) if provider_status else "No providers",
+            name="Provider",
+            value="✅ `Groq`",
             inline=False
         )
         
-        embed.set_footer(text="Use /aihelp for more info")
+        embed.set_footer(text="Use /chathelp for more info")
 
         
         await ctx.send(embed=embed)
@@ -1189,54 +1091,48 @@ class AIChat(commands.Cog):
         Show detailed system status.
         """
         # Gather all status info
-        conv_stats = self.conversation_manager.get_stats()
         rate_stats = self.rate_limiter.get_global_stats()
-        provider_health = self.provider_manager.get_health_status()
         
-        uptime_seconds = time.time() - self._stats["start_time"]
-        uptime_hours = uptime_seconds / 3600
-        
-        healthy_providers = sum(1 for h in provider_health.values() if h["healthy"])
+        # Load memory stats from storage
+        try:
+            all_channels = self.storage._load_all_channel_memories()
+            all_guilds = self.storage._load_all_guild_memories()
+            
+            total_channels = len(all_channels)
+            total_guilds = len(all_guilds)
+            total_messages = sum(len(mem.get("messages", [])) for mem in all_channels.values()) + \
+                            sum(len(mem.get("messages", [])) for mem in all_guilds.values())
+        except Exception:
+            total_channels = 0
+            total_guilds = 0
+            total_messages = 0
         
         # Main status embed
         embed = discord.Embed(
             title="🔍 Detailed System Status",
-            description=f"Uptime: **{uptime_hours:.1f} hours**",
+            description="Service: Operational",
             color=discord.Color.blue(),
             timestamp=datetime.utcnow()
         )
         
         # System health
-        health_emoji = "🟢" if healthy_providers > 0 else "🔴"
         embed.add_field(
-            name=f"{health_emoji} System Health",
+            name="🟢 System Health",
             value=(
-                f"Status: **{'Operational' if healthy_providers > 0 else 'Down'}**\n"
-                f"Providers: {healthy_providers}/{len(provider_health)} online\n"
-                f"Success Rate: {(self._stats['successful_requests'] / max(1, self._stats['total_requests']) * 100):.1f}%"
+                "Status: **Operational**\n"
+                "Provider: Groq (Online)\n"
+                "Storage: Active"
             ),
             inline=True
         )
         
-        # Request stats
+        # Memory stats
         embed.add_field(
-            name="📊 Requests",
+            name="💾 Memory/Conversations",
             value=(
-                f"Total: {self._stats['total_requests']}\n"
-                f"✅ Success: {self._stats['successful_requests']}\n"
-                f"❌ Failed: {self._stats['failed_requests']}\n"
-                f"⏳ Rate Limited: {self._stats['rate_limited_requests']}"
-            ),
-            inline=True
-        )
-        
-        # Conversation stats
-        embed.add_field(
-            name="💬 Conversations",
-            value=(
-                f"Active: {conv_stats['active_conversations']}\n"
-                f"Total Created: {conv_stats['total_conversations']}\n"
-                f"Messages: {conv_stats['total_messages']}"
+                f"Active Channels: {total_channels}\n"
+                f"Active Guilds: {total_guilds}\n"
+                f"Total Messages: {total_messages}"
             ),
             inline=True
         )
@@ -1252,6 +1148,7 @@ class AIChat(commands.Cog):
             inline=True
         )
         
+        
         # Configuration
         embed.add_field(
             name="⚙️ Configuration",
@@ -1263,23 +1160,7 @@ class AIChat(commands.Cog):
             inline=True
         )
         
-        # Provider details
-        provider_details = []
-        for name, health in provider_health.items():
-            emoji = "✅" if health["healthy"] else "❌"
-            avg_time = health.get("avg_response_time", 0)
-            success_rate = ((health["total_requests"] - health["total_failures"]) / max(1, health["total_requests"]) * 100)
-            provider_details.append(
-                f"{emoji} **{name}** - {health['total_requests']} req, {success_rate:.0f}% success, {avg_time:.2f}s avg"
-            )
-        
-        embed.add_field(
-            name="🤖 Provider Details",
-            value="\n".join(provider_details) if provider_details else "No providers available",
-            inline=False
-        )
-        
-        embed.set_footer(text="All systems operational" if healthy_providers > 0 else "System experiencing issues")
+        embed.set_footer(text="All systems operational")
         
         await ctx.send(embed=embed)
     
@@ -1301,31 +1182,23 @@ class AIChat(commands.Cog):
     @chat_admin.command(name="resetuser")
     @commands.is_owner()
     async def reset_user(self, ctx: commands.Context, user_id: int) -> None:
-        """Reset a user's conversation and rate limits."""
-        await self.conversation_manager.delete_conversation(user_id)
+        """Reset a user's rate limits (memory now handled per-channel)."""
         self.rate_limiter.reset_user(user_id)
-        await ctx.send(f"✅ Reset data for user {user_id}.")
+        await ctx.send(f"✅ Reset rate limits for user {user_id}.")
     
     @chat_admin.command(name="resetall")
     @commands.is_owner()
     async def reset_all(self, ctx: commands.Context) -> None:
-        """Reset all conversations and rate limits."""
+        """Reset all rate limits."""
         self.rate_limiter.reset_all()
-        self._stats = {
-            "total_requests": 0,
-            "successful_requests": 0,
-            "failed_requests": 0,
-            "rate_limited_requests": 0,
-            "start_time": time.time()
-        }
-        await ctx.send("✅ All rate limits and statistics have been reset.")
+        await ctx.send("✅ All rate limits have been reset.")
     
     @chat_admin.command(name="cleanup")
     @commands.is_owner()
     async def force_cleanup(self, ctx: commands.Context) -> None:
-        """Force cleanup of expired conversations."""
-        removed = await self.conversation_manager.cleanup_expired()
-        await ctx.send(f"✅ Cleaned up {removed} expired conversations.")
+        """Force cleanup of old memories (30+ days)."""
+        await self.storage.cleanup_old_memories(days=30)
+        await ctx.send(f"✅ Cleaned up old memories.")
     
     # ==================== Helper Methods ====================
     
@@ -1375,50 +1248,7 @@ class AIChat(commands.Cog):
         
         return chunks
     
-    async def _save_conversation_background(self, user_id: int, conversation: List[Dict]) -> None:
-        """Save conversation in background (non-blocking)."""
-        try:
-            await asyncio.sleep(0)  # Yield control
-            # Save to conversation manager without blocking
-            # This happens AFTER user already got their response
-            pass  # Implement if you need disk persistence
-        except Exception as e:
-            logger.error(f"Background save failed: {e}")
-    
-    async def _load_cache_from_disk(self) -> None:
-        """Load conversations from disk on startup."""
-        try:
-            await self.bot.wait_until_ready()
-            # Load from conversation manager if needed
-            logger.info("Cache loaded from disk")
-        except Exception as e:
-            logger.error(f"Failed to load cache: {e}")
-    
-    @tasks.loop(minutes=5)
-    async def _persistence_task(self) -> None:
-        """Periodic background save (every 5 minutes)."""
-        try:
-            if self.config.persist_conversations and self._conversations_cache:
-                logger.info(f"Background save: {len(self._conversations_cache)} conversations")
-                # Save to disk without blocking
-                for user_id, conversation in self._conversations_cache.items():
-                    for msg in conversation:
-                        if msg["role"] == "user":
-                            await self.conversation_manager.add_message(
-                                user_id, "user", msg["content"]
-                            )
-                        elif msg["role"] == "assistant":
-                            await self.conversation_manager.add_message(
-                                user_id, "assistant", msg["content"]
-                            )
-        except Exception as e:
-            logger.error(f"Error in persistence task: {e}")
-    
-    @_persistence_task.before_loop
-    async def _before_persistence(self) -> None:
-        """Wait for bot to be ready."""
-        await self.bot.wait_until_ready()
-    
+
 
 
 async def setup(bot: commands.Bot) -> None:

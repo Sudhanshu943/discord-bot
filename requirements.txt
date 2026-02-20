@@ -5,3 +5,4 @@ PyNaCl
 ffmpeg-python
 ytmusicapi
 aiohttp
+groq>=0.4.0
