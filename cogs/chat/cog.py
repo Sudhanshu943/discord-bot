@@ -878,10 +878,10 @@ class AIChat(commands.Cog):
             song_recommendations = self.music_integration.extract_songs_from_text(response_text)
             
             if song_recommendations:
-                # Format response in new JSON structure
                 songs_list = ", ".join([s.strip() for s in song_recommendations])
                 queries_list = ", ".join([f">> {s.strip()}" for s in song_recommendations])
-                
+
+                # ✅ Log JSON to terminal only
                 json_response = {
                     "person": message.author.name,
                     "action": "playing",
@@ -889,27 +889,24 @@ class AIChat(commands.Cog):
                     "song": songs_list,
                     "query": queries_list
                 }
-                response_text = f"```json\n{json.dumps(json_response, indent=2)}\n```"
-                
-                # Print ALL responses to terminal in JSON format
                 logger.info(f"📥 IN: {content}")
                 logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
-                
-                # Send the JSON response
+
+                # ✅ Send the actual AI response text to Discord (NOT JSON)
                 if len(response_text) > 2000:
-                    chunks = self._split_message(response_text, 2000)
-                    for chunk in chunks:
+                    for chunk in self._split_message(response_text, 2000):
                         await message.reply(chunk, mention_author=False)
                 else:
                     await message.reply(response_text, mention_author=False)
-                
-                # Play the recommended songs one by one
+
+                # Play songs
                 for song_query in song_recommendations:
                     if song_query.strip():
-                        success, play_response = await self.music_integration.search_and_play(message, song_query.strip())
+                        _, play_response = await self.music_integration.search_and_play(message, song_query.strip())
                         await message.reply(play_response, mention_author=False)
+    
             else:
-                # No song recommendations - format as JSON anyway
+                # ✅ Log JSON to terminal only
                 json_response = {
                     "person": message.author.name,
                     "action": "chat",
@@ -917,26 +914,42 @@ class AIChat(commands.Cog):
                     "song": "",
                     "query": ""
                 }
-                
+                logger.info(f"📥 IN: {content}")
+                logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
+    
+                # ✅ Send actual response to Discord
+                if len(response_text) > 2000:
+                    for chunk in self._split_message(response_text, 2000):
+                        await message.reply(chunk, mention_author=False)
+                else:
+                    await message.reply(response_text, mention_author=False)
+
+                    # No song recommendations - format as JSON anyway
+                json_response = {
+                    "person": message.author.name,
+                    "action": "chat",
+                    "chat": response[:500] if len(response) > 500 else response,
+                    "song": "",
+                    "query": ""
+                }
+
                 # Print ALL responses to terminal in JSON format
                 logger.info(f"📥 IN: {content}")
                 logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
-                
+
                 # Handle long responses
                 if len(response_text) > 2000:
                     chunks = self._split_message(response_text, 2000)
                     for chunk in chunks:
                         await message.reply(chunk, mention_author=False)
                 else:
-                    await message.reply(response_text, mention_author=False)
-
+                    await message.reply(response_text, mention_author=False)    
         except RateLimitException as e:
             await message.reply(
                 f"⏳ You're sending messages too fast! "
                 f"Please wait {e.retry_after:.1f} seconds.",
                 mention_author=False
-            )
-
+            )   
         except ChatException:
             await message.reply(
                 "❌ Sorry, I couldn't process your request right now. "
