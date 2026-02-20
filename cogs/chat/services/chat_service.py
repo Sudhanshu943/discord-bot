@@ -65,6 +65,10 @@ class ChatService:
         Raises:
             ValueError: If validation fails
         """
+        # Step 0: Determine personality for this channel
+        selected_personality = self.config.get_channel_personality(channel_id)
+        logger.info(f"[Personality] Using: {selected_personality.name} for channel {channel_id}")
+        
         # Step 1: Validate user input
         valid, error = await self.safety_filter.validate_user_input(message)
         if not valid:
@@ -94,13 +98,14 @@ class ChatService:
             logger.warning(f"Context too long, trimming: {error}")
             context = context[:self.safety_filter.max_context_length]
         
-        # Step 3: Route to provider
+        # Step 3: Route to provider with selected personality
         try:
             response_text, provider = await self.provider_router.route_request(
                 message=message,
                 context=context,
                 max_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                personality=selected_personality
             )
         except Exception as e:
             logger.error(f"Provider error: {e}")

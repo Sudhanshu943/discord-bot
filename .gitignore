@@ -51,7 +51,7 @@ logs/
 *.sqlite3
 
 # Configuration files with secrets
-config/secrets.ini
+*.ini
 config/*.env
 *.pem
 *.key

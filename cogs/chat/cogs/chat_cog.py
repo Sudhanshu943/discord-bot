@@ -380,6 +380,64 @@ class ChatCog(commands.Cog):
             return
         await ctx.send("✅ Your preferred provider has been set to **groq**.")
 
+    @commands.hybrid_command(name="setpersonality", description="Set the AI personality for this channel")
+    @app_commands.describe(personality="The personality to use (e.g., default, aggressive, professional)")
+    async def set_personality(self, ctx: commands.Context, personality: str = None) -> None:
+        """Set the AI personality for the current channel.
+        
+        Available personalities are loaded from the config file.
+        This command sets a channel-specific override.
+        """
+        # List available personalities if none specified
+        if personality is None:
+            available = self.config.get_all_personality_names()
+            current = self.config.channel_personality_map.get(
+                ctx.channel.id, 
+                self.config.default_personality
+            )
+            
+            personality_list = "\n".join([f"• **{name}**" for name in sorted(available)])
+            embed = discord.Embed(
+                title="🎭 Available Personalities",
+                description=f"Use: `/setpersonality <name>`\n\nCurrent: **{current}**",
+                color=discord.Color.blurple()
+            )
+            embed.add_field(name="Personalities", value=personality_list or "No personalities configured", inline=False)
+            embed.set_footer(text="Personalities are defined in config/chat_config.ini")
+            await ctx.send(embed=embed)
+            return
+        
+        # Validate and set personality
+        personality_lower = personality.lower().strip()
+        
+        if personality_lower not in self.config.personalities:
+            available = self.config.get_all_personality_names()
+            await ctx.send(
+                f"❌ Personality `{personality}` not found.\n\n"
+                f"Available personalities: {', '.join(sorted(available))}"
+            )
+            return
+        
+        # Set the channel personality override
+        success = self.config.set_channel_personality(ctx.channel.id, personality_lower)
+        
+        if success:
+            personality_config = self.config.get_personality(personality_lower)
+            embed = discord.Embed(
+                title="🎭 Personality Updated",
+                description=f"Channel personality set to: **{personality_config.name}**",
+                color=discord.Color.green()
+            )
+            if hasattr(personality_config, 'tone') and personality_config.tone:
+                embed.add_field(name="Tone", value=personality_config.tone, inline=False)
+            if hasattr(personality_config, 'allowed_features') and personality_config.allowed_features:
+                features = ", ".join(personality_config.allowed_features)
+                embed.add_field(name="Features", value=features, inline=False)
+            embed.set_footer(text="This override applies only to this channel")
+            await ctx.send(embed=embed)
+        else:
+            await ctx.send(f"❌ Failed to set personality. Please check available personalities with `/setpersonality`")
+
     @commands.hybrid_command(name="chatping", description="Check if the chatbot is responsive")
     async def ping(self, ctx: commands.Context) -> None:
         start_time = time.time()
@@ -418,8 +476,17 @@ class ChatCog(commands.Cog):
             value=(
                 f"✅ Conversation memory ({self.config.max_history} messages)\n"
                 f"✅ Multiple AI providers with fallback\n"
+                f"✅ Selectable personalities\n"
                 f"✅ Rate limiting ({self.config.rate_limit.user_cooldown}s cooldown)\n"
                 f"✅ DM support: {'Enabled' if self.config.features.allow_dm else 'Disabled'}"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🎭 Personality Commands",
+            value=(
+                "• `/setpersonality` - Show available personalities\n"
+                "• `/setpersonality <name>` - Set channel personality"
             ),
             inline=False
         )

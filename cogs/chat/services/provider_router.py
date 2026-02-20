@@ -56,7 +56,8 @@ class ProviderRouter:
         message: str,
         context: str,
         max_tokens: int = 1000,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        personality = None
     ) -> Tuple[str, ProviderType]:
         """
         Route request to appropriate provider with automatic fallback on rate limits.
@@ -66,6 +67,7 @@ class ProviderRouter:
             context: Conversation context
             max_tokens: Maximum tokens in response
             temperature: Response temperature
+            personality: PersonalityConfig object (optional)
             
         Returns:
             Tuple of (response_text, provider_used)
@@ -78,7 +80,7 @@ class ProviderRouter:
             raise Exception("Groq provider not initialized. Ensure GROQ_API_KEY is set.")
         
         # Build system prompt with personality
-        system_prompt = self._build_system_prompt()
+        system_prompt = self._build_system_prompt(personality)
         
         # Build conversation context
         conversation_history = context
@@ -162,18 +164,27 @@ class ProviderRouter:
                     logger.error(f"❌ Groq API error on {model}: {e}")
                     raise
     
-    def _build_system_prompt(self) -> str:
-        """Build system prompt from config."""
-        # Try to use personality manager if available
-        if hasattr(self.config, 'personality') and self.config.personality:
-            try:
-                prompt = self.config.system_prompt
-                if prompt:
-                    return prompt
-            except Exception as e:
-                logger.warning(f"Failed to get personality prompt: {e}")
+    def _build_system_prompt(self, personality = None) -> str:
+        """Build system prompt from personality or config.
         
-        # Use config system prompt
+        Args:
+            personality: PersonalityConfig object (optional)
+            
+        Returns:
+            System prompt string
+        """
+        # Use provided personality
+        if personality and hasattr(personality, 'system_prompt'):
+            return personality.system_prompt
+        
+        # Try to use config personality system
+        if hasattr(self.config, 'personalities') and self.config.personalities:
+            # Get default personality
+            default_personality = self.config.personalities.get(self.config.default_personality)
+            if default_personality:
+                return default_personality.system_prompt
+        
+        # Try to use config system prompt (legacy)
         if hasattr(self.config, 'system_prompt') and self.config.system_prompt:
             return self.config.system_prompt
         
