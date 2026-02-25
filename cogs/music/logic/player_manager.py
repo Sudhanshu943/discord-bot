@@ -21,16 +21,14 @@ logger = logging.getLogger('discord.music.player')
 
 # ✅ IMPROVED YT-DLP options - Works with or without Node.js
 YDL_OPTS = {
-    'format': 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best',
+    'format': 'bestaudio/best',
     'quiet': True,
-    'cookiefile': './cookies.txt',
-    'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'no_warnings': False,
-    'extractor_retries': 3,
-    'fragment_retries': 3,
     'skip_download': True,
-    'no_color': True,
+    'default_search': 'ytsearch',
+    'source_address': '0.0.0.0',
+    'extractor_retries': 5,
+    'fragment_retries': 5,
+    'ignoreerrors': False,
 }
 
 # Extractor's specific args for YouTube
