@@ -73,18 +73,18 @@ class Music(commands.Cog):
             
             # Check if interaction is expired
             interaction_expired = False
-            if isinstance(ctx, commands.Context) and ctx.interaction_metadata:
+            if hasattr(ctx, 'interaction') and ctx.interaction:
                 interaction_expired = getattr(ctx.interaction, '_expired', False)
             
             # If interaction expired, use channel send instead
             if interaction_expired:
                 kwargs.pop('view', None)
                 kwargs.pop('ephemeral', None)
-                if ctx.channel:
+                if hasattr(ctx, 'channel') and ctx.channel:
                     return await ctx.channel.send(**kwargs)
                 return None
             
-            if isinstance(ctx, commands.Context) and ctx.interaction_metadata:
+            if hasattr(ctx, 'interaction') and ctx.interaction:
                 if ctx.interaction.response.is_done():
                     return await ctx.interaction.followup.send(**kwargs)
                 else:

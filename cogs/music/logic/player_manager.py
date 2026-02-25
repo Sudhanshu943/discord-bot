@@ -11,6 +11,7 @@ import yt_dlp
 import logging
 import asyncio
 import concurrent.futures
+import re
 from typing import Optional, Dict, Any
 from collections import deque
 from datetime import datetime
@@ -18,15 +19,26 @@ from datetime import datetime
 
 logger = logging.getLogger('discord.music.player')
 
-# ✅ OPTIMIZED YT-DLP options for SPEED + Opus preference
+# ✅ IMPROVED YT-DLP options - Works with or without Node.js
 YDL_OPTS = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best',
     'quiet': True,
     'cookiefile': './cookies.txt',
-    'js_runtimes': {
-        'node': {}
-    },
-    'remote_components': ['ejs:github'],
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'no_warnings': False,
+    'extractor_retries': 3,
+    'fragment_retries': 3,
+    'skip_download': True,
+    'no_color': True,
+}
+
+# Extractor's specific args for YouTube
+YDL_EXTRACTOR_ARGS = {
+    'youtube': {
+        'player_client': ['android', 'default'],  # Try simpler clients first
+        'player_skip': ['configs', 'js', 'hls'],
+    }
 }
 
 
@@ -148,16 +160,46 @@ class MusicPlayer:
     
     async def extract_audio_url(self, url: str, fast: bool = False) -> Optional[str]:
         """
-        Extract audio URL with SPEED optimization
+        Extract audio URL with fallback support:
+        1. First try YouTube Music URL
+        2. If extraction fails, try regular YouTube URL
         Args:
             fast: If True, prefer speed over quality
         """
         loop = asyncio.get_event_loop()
         
+        # Check if this is a YouTube Music URL
+        youtube_music_pattern = r'music\.youtube\.com/watch\?v=([a-zA-Z0-9_-]+)'
+        match = re.search(youtube_music_pattern, url)
+        
+        if match:
+            # This is a YouTube Music URL - try both YouTube Music and regular YouTube
+            video_id = match.group(1)
+            youtube_music_url = url
+            youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            logger.info(f"Trying YouTube Music first: {youtube_music_url}")
+            
+            # First try YouTube Music
+            audio_url = await self._try_extract(loop, youtube_music_url, fast)
+            
+            if not audio_url:
+                # Fallback to regular YouTube
+                logger.warning(f"YouTube Music extraction failed, trying regular YouTube: {youtube_url}")
+                audio_url = await self._try_extract(loop, youtube_url, fast)
+            
+            return audio_url
+        else:
+            # Regular YouTube URL - just try once
+            return await self._try_extract(loop, url, fast)
+    
+    async def _try_extract(self, loop, url: str, fast: bool = False) -> Optional[str]:
+        """Helper method to extract audio URL with error handling"""
         def _extract():
             opts = YDL_OPTS.copy()
+            opts['extractor_args'] = YDL_EXTRACTOR_ARGS
             if fast:
-                opts['format'] = 'worstaudio/worst'  # Fastest extraction
+                opts['format'] = 'bestaudio/best'  # Faster format for quick search
             
             with yt_dlp.YoutubeDL(opts) as ydl:
                 return ydl.extract_info(url, download=False)
@@ -170,6 +212,12 @@ class MusicPlayer:
             
             return self._get_audio_url(info)
             
+        except yt_dlp.utils.DownloadError as e:
+            logger.warning(f"Download error for {url}: {e}")
+            return None
+        except yt_dlp.utils.ExtractorError as e:
+            logger.warning(f"Extractor error for {url}: {e}")
+            return None
         except Exception as e:
             logger.error(f"Extraction error for {url}: {e}")
             return None

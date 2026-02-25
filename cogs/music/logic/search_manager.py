@@ -181,6 +181,7 @@ class SearchManager:
                 if not video_id:
                     continue
                 
+                # Use YouTube Music URL (first priority)
                 youtube_url = f"https://music.youtube.com/watch?v={video_id}"
                 artists = result.get('artists', [])
                 artist_name = artists[0]['name'] if artists else 'Unknown'
@@ -302,6 +303,7 @@ class SearchManager:
                 if not video_id:
                     continue
                 
+                # Use YouTube Music URL (first priority)
                 youtube_url = f"https://music.youtube.com/watch?v={video_id}"
                 artists = track.get('artists', [])
                 artist_name = artists[0]['name'] if artists else 'Unknown'
@@ -427,6 +429,7 @@ class SearchManager:
                     if not video_id:
                         continue
                     
+                    # Use YouTube Music URL if applicable, otherwise regular YouTube
                     if platform == Platform.YOUTUBE_MUSIC:
                         video_url = f"https://music.youtube.com/watch?v={video_id}"
                     else:
