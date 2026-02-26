@@ -55,7 +55,7 @@ logs/
 config/*.env
 *.pem
 *.key
-cookies.txt
+# cookies.txt
 
 # Node.js (if used)
 node_modules/
