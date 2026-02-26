@@ -1,5 +1,7 @@
 {
-  "packages": {
-    "apt": ["ffmpeg"]
+  "build": {
+    "packages": {
+      "apt": ["ffmpeg"]
+    }
   }
 }
