@@ -1,6 +1,6 @@
 {
-  "build": {
-    "packages": {
+  "steps": {
+    "install": {
       "apt": ["ffmpeg"]
     }
   }
