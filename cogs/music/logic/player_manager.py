@@ -31,6 +31,13 @@ YDL_OPTS = {
     'ignoreerrors': False,
 }
 
+# Extractor's specific args for YouTube
+YDL_EXTRACTOR_ARGS = {
+    'youtube': {
+        'player_client': ['default'],  # Try simpler clients first
+        'player_skip': ['configs', 'js', 'hls'],
+    }
+}
 
 
 
