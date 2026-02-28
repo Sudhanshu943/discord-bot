@@ -149,6 +149,11 @@ class ChatCog(commands.Cog):
                 if clean_song:
                     song_recommendations.append(clean_song)
 
+        if song_requested and not song_recommendations:
+            extracted_song, extracted_query = self._extract_song_query_from_content(content)
+            if extracted_song and extracted_query:
+                song_recommendations.append(extracted_song)
+
         user_in_voice = hasattr(message.author, 'voice') and message.author.voice is not None
 
         if song_requested and song_recommendations:
@@ -164,11 +169,10 @@ class ChatCog(commands.Cog):
             logger.info(f"📥 IN: {content}")
             logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
 
-            if len(response_text) > 2000:
-                for chunk in self._split_message(response_text, 2000):
-                    await message.reply(chunk, mention_author=False)
-            else:
-                await message.reply(response_text, mention_author=False)
+            await message.reply(
+                json.dumps({"song": songs_list, "query": queries_list}, ensure_ascii=False),
+                mention_author=False
+            )
 
             if user_in_voice:
                 for song_query in song_recommendations:
@@ -177,18 +181,6 @@ class ChatCog(commands.Cog):
                             message, song_query.strip()
                         )
                         await message.reply(play_response, mention_author=False)
-            else:
-                suggest_embed = discord.Embed(
-                    title="🎵 Song Suggestions",
-                    description=f"**{songs_list}**",
-                    color=discord.Color.blue()
-                )
-                suggest_embed.add_field(
-                    name="Join a voice channel to play",
-                    value="Use `/play` or `/join` to play these songs",
-                    inline=False
-                )
-                await message.reply(embed=suggest_embed, mention_author=False)
             return
 
         json_response = {
@@ -223,6 +215,38 @@ class ChatCog(commands.Cog):
             r"\bgaana\b",
         ]
         return any(re.search(pattern, msg) for pattern in patterns)
+
+    @staticmethod
+    def _extract_song_query_from_content(content: str) -> Tuple[str, str]:
+        """Extract song title/query from explicit user request text."""
+        text = (content or "").strip()
+        lowered = text.lower()
+        if not text:
+            return "", ""
+
+        patterns = [
+            r'^\s*play\s+song\s+(.+?)\s*$',
+            r'^\s*play\s+(.+?)\s*$',
+            r'^\s*baja\s+(.+?)\s*$',
+            r'^\s*sunao\s+(.+?)\s*$',
+            r'^\s*suna\s+de\s+(.+?)\s*$',
+        ]
+
+        for pattern in patterns:
+            match = re.match(pattern, lowered, flags=re.IGNORECASE)
+            if not match:
+                continue
+            query = match.group(1).strip()
+            if not query:
+                continue
+            if "trending" in query and "song" in query:
+                return "Trending Song", "trending song"
+            return query.title(), query
+
+        if "trending song" in lowered:
+            return "Trending Song", "trending song"
+
+        return "", ""
 
     @staticmethod
     def _strip_song_json(text: str) -> str:
@@ -451,21 +475,8 @@ class ChatCog(commands.Cog):
             return
 
         # --- Direct play request (Hindi + English) ---
-        play_song_match = None
-        play_patterns = [
-            r'play\s+(.+)',
-            r'play\s+song\s+(.+)',
-            r'baja\s+(.+)',
-            r'sunao\s+(.+)',
-            r'suna\s+de\s+(.+)'
-        ]
-        for pattern in play_patterns:
-            match = re.match(pattern, msg_lower)
-            if match:
-                play_song_match = match.group(1).strip()
-                break
-
-        if play_song_match:
+        extracted_song, extracted_query = self._extract_song_query_from_content(content)
+        if extracted_song and extracted_query:
             json_response = {
                 "person": message.author.name,
                 "action": "playing",
