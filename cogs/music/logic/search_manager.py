@@ -4,6 +4,7 @@ Handles multi-platform search using yt-dlp and ytmusicapi
 ✅ Fast playlist extraction with extract_flat
 ✅ YouTube Mix/Radio support
 ✅ Optimized for instant playback
+✅ YouTube cookies support
 """
 
 import yt_dlp
@@ -11,6 +12,7 @@ import logging
 import re
 import asyncio
 import concurrent.futures
+import os
 from typing import Optional, List, Tuple
 from enum import Enum
 
@@ -49,6 +51,11 @@ YDL_SEARCH_OPTS = {
     'fragment_retries': 3,
     'skip_unavailable_fragments': True,
 }
+
+# Add cookies to YDL_SEARCH_OPTS if file exists
+COOKIE_FILE = 'cookies.txt'
+if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
+    YDL_SEARCH_OPTS['cookiefile'] = COOKIE_FILE
 
 class SearchManager:
     """

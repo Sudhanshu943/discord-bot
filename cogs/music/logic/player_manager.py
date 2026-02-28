@@ -4,6 +4,7 @@ Player Manager Module - ULTRA-FAST VERSION
 ✅ Background pre-loading for next songs
 ✅ Optimized FFmpeg for low latency
 ✅ Opus codec preference
+✅ YouTube cookies support
 """
 
 import discord
@@ -12,12 +13,45 @@ import logging
 import asyncio
 import concurrent.futures
 import re
+import requests
+import os
+from dotenv import load_dotenv
 from typing import Optional, Dict, Any
 from collections import deque
-from datetime import datetime
 
 
 logger = logging.getLogger('discord.music.player')
+
+# Load environment variables
+load_dotenv()
+
+# Cookie file path
+COOKIE_FILE = 'cookies.txt'
+
+def download_youtube_cookies():
+    """Download YouTube cookies.txt from URL specified in .env"""
+    cookie_url = os.getenv('YOUTUBE_COOKIE_URL')
+    
+    if not cookie_url:
+        logger.info("YouTube cookie URL not configured in .env")
+        return False
+    
+    try:
+        logger.info("Downloading YouTube cookies...")
+        response = requests.get(cookie_url, timeout=30)
+        response.raise_for_status()
+        
+        with open(COOKIE_FILE, 'w', encoding='utf-8') as f:
+            f.write(response.text)
+        
+        logger.info("✅ YouTube cookies downloaded successfully")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to download YouTube cookies: {e}")
+        return False
+
+# Download cookies on module load
+download_youtube_cookies()
 
 # ✅ IMPROVED YT-DLP options - Works with or without Node.js
 YDL_OPTS = {
@@ -30,6 +64,11 @@ YDL_OPTS = {
     'fragment_retries': 5,
     'ignoreerrors': False,
 }
+
+# Add cookies to YDL_OPTS if file exists
+if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
+    YDL_OPTS['cookiefile'] = COOKIE_FILE
+    logger.info("✅ YouTube cookies enabled")
 
 # Extractor's specific args for YouTube
 YDL_EXTRACTOR_ARGS = {
