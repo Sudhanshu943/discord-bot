@@ -117,19 +117,15 @@ class ChatCog(commands.Cog):
         provider: Optional[str]
     ) -> None:
         """Format and send the AI response to Discord."""
-        # Format response text
         if self.config.features.show_provider and provider:
             bot_name = self.bot.user.name.lower()
             response_text = f"{response}\n\n> *— {bot_name}*"
         else:
             response_text = response
 
-        # Check for song recommendations (>> format) in AI response
         song_recommendations = []
-
-        # 1️⃣ Try structured JSON extraction first
         json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
-        
+
         if json_match:
             try:
                 parsed = json.loads(json_match.group())
@@ -139,23 +135,19 @@ class ChatCog(commands.Cog):
                         song_recommendations.append(clean_song)
             except json.JSONDecodeError:
                 pass
-            
-        # 2️⃣ Fallback to >> extraction if no valid JSON found
+
         if not song_recommendations:
             raw_songs = self.music_integration.extract_songs_from_text(response_text)
             for song in raw_songs:
                 clean_song = re.sub(r'[^\w\s\-]', '', song).strip()
                 if clean_song:
                     song_recommendations.append(clean_song)
-        
 
-        # Only auto-play if user is in a voice channel
         user_in_voice = hasattr(message.author, 'voice') and message.author.voice is not None
 
         if song_recommendations:
             songs_list = ", ".join([s.strip() for s in song_recommendations])
             queries_list = ", ".join([f">> {s.strip()}" for s in song_recommendations])
-
             json_response = {
                 "person": message.author.name,
                 "action": "playing" if user_in_voice else "suggesting",
@@ -172,7 +164,6 @@ class ChatCog(commands.Cog):
             else:
                 await message.reply(response_text, mention_author=False)
 
-            # Auto-play only if user is in a voice channel
             if user_in_voice:
                 for song_query in song_recommendations:
                     if song_query.strip():
@@ -181,7 +172,6 @@ class ChatCog(commands.Cog):
                         )
                         await message.reply(play_response, mention_author=False)
             else:
-                # User not in voice channel - just suggest the songs
                 suggest_embed = discord.Embed(
                     title="🎵 Song Suggestions",
                     description=f"**{songs_list}**",
@@ -193,24 +183,68 @@ class ChatCog(commands.Cog):
                     inline=False
                 )
                 await message.reply(embed=suggest_embed, mention_author=False)
+            return
+
+        json_response = {
+            "person": message.author.name,
+            "action": "chat",
+            "chat": response[:500] if len(response) > 500 else response,
+            "song": "",
+            "query": ""
+        }
+        logger.info(f"📥 IN: {content}")
+        logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
+
+        if len(response_text) > 2000:
+            for chunk in self._split_message(response_text, 2000):
+                await message.reply(chunk, mention_author=False)
         else:
-            json_response = {
-                "person": message.author.name,
-                "action": "chat",
-                "chat": response[:500] if len(response) > 500 else response,
-                "song": "",
-                "query": ""
-            }
-            logger.info(f"📥 IN: {content}")
-            logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
+            await message.reply(response_text, mention_author=False)
 
-            if len(response_text) > 2000:
-                for chunk in self._split_message(response_text, 2000):
-                    await message.reply(chunk, mention_author=False)
-            else:
-                await message.reply(response_text, mention_author=False)
+    def _format_user_message_for_memory(self, message: discord.Message, content: str) -> str:
+        """Create a speaker-labeled memory line for stronger multi-user context."""
+        normalized = " ".join(content.split())
+        return f"[User: {message.author.display_name} (ID: {message.author.id})] {normalized}"
 
-    # ==================== Commands ====================
+    async def _is_reply_to_bot(self, message: discord.Message) -> bool:
+        """Robustly determine if message replies to the bot, even when reference is unresolved."""
+        if not message.reference:
+            return False
+
+        resolved = message.reference.resolved
+        if resolved is None and message.reference.message_id and hasattr(message.channel, "fetch_message"):
+            try:
+                resolved = await message.channel.fetch_message(message.reference.message_id)
+            except Exception:
+                return False
+
+        return bool(
+            resolved and
+            getattr(resolved, "author", None) and
+            resolved.author.id == self.bot.user.id
+        )
+
+    async def _store_passive_context(self, message: discord.Message, content: str) -> None:
+        """Store non-trigger chat messages so the next bot query sees recent group discussion."""
+        if not content or not content.strip():
+            return
+
+        formatted = self._format_user_message_for_memory(message, content)
+        await self.memory_manager.add_to_channel_memory(
+            message.channel.id,
+            "user",
+            formatted,
+            message.author.id
+        )
+
+        if message.guild:
+            await self.memory_manager.add_to_guild_memory(
+                message.guild.id,
+                "user",
+                formatted,
+                message.author.id
+            )
+# ==================== Commands ====================
 
     @commands.hybrid_command(name="ask", description="Ask the AI a question")
     @app_commands.describe(question="Your question for the AI")
@@ -328,13 +362,14 @@ class ChatCog(commands.Cog):
         dedicated_channels = self.config.get_dedicated_channels()
         is_dedicated_channel = message.channel.id in dedicated_channels
         bot_mentioned = self.bot.user in message.mentions
-        is_reply_to_bot = (
-            message.reference and
-            message.reference.resolved and
-            message.reference.resolved.author.id == self.bot.user.id
-        )
+        is_reply_to_bot = await self._is_reply_to_bot(message)
 
         if not (is_dedicated_channel or bot_mentioned or is_reply_to_bot):
+            # Capture background conversation for future context understanding.
+            try:
+                await self._store_passive_context(message, message.content)
+            except Exception as e:
+                logger.error(f"Failed to store passive context: {e}")
             return
 
         if isinstance(message.channel, discord.DMChannel) and not self.config.features.allow_dm:
@@ -529,3 +564,4 @@ class ChatCog(commands.Cog):
             remaining = remaining[break_point:]
 
         return chunks
+

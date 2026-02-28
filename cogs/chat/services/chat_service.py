@@ -77,15 +77,21 @@ class ChatService:
         # Step 2: Build conversation context
         context_parts = []
         
-        # Add channel context
+        # Add channel context (primary signal for multi-user conversations)
         if use_channel_memory and channel_id:
-            channel_context = await self.memory_manager.get_channel_context(channel_id, limit=10)
+            channel_context = await self.memory_manager.get_channel_context(
+                channel_id,
+                limit=max(1, int(getattr(self.config, "max_history", 20)))
+            )
             if channel_context:
                 context_parts.append(f"Channel history:\n{channel_context}")
         
-        # Add guild context
-        if use_guild_memory and guild_id:
-            guild_context = await self.memory_manager.get_guild_context(guild_id, limit=5)
+        # Add guild context only as fallback when channel context is empty
+        if use_guild_memory and guild_id and not context_parts:
+            guild_context = await self.memory_manager.get_guild_context(
+                guild_id,
+                limit=max(5, int(getattr(self.config, "max_history", 20)) // 2)
+            )
             if guild_context:
                 context_parts.append(f"Guild history:\n{guild_context}")
         
