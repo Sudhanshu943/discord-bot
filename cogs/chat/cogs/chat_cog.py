@@ -108,7 +108,6 @@ class ChatCog(commands.Cog):
             raise ChatException("Failed to process request")
 
     # ==================== Helper: Send Response ====================
-
     async def _send_response(
         self,
         message: discord.Message,
@@ -117,16 +116,23 @@ class ChatCog(commands.Cog):
         provider: Optional[str]
     ) -> None:
         """Format and send the AI response to Discord."""
+        song_requested = self._is_song_request(content)
+
         if self.config.features.show_provider and provider:
             bot_name = self.bot.user.name.lower()
             response_text = f"{response}\n\n> *— {bot_name}*"
         else:
             response_text = response
 
-        song_recommendations = []
-        json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
+        # Hide any inline song/query JSON from Discord-visible text.
+        response_text = self._strip_song_json(response_text).strip()
+        if not response_text:
+            response_text = "Done."
 
-        if json_match:
+        song_recommendations = []
+        json_match = re.search(r'\{.*?\}', response, re.DOTALL)
+
+        if song_requested and json_match:
             try:
                 parsed = json.loads(json_match.group())
                 if isinstance(parsed, dict) and "song" in parsed:
@@ -136,7 +142,7 @@ class ChatCog(commands.Cog):
             except json.JSONDecodeError:
                 pass
 
-        if not song_recommendations:
+        if song_requested and not song_recommendations:
             raw_songs = self.music_integration.extract_songs_from_text(response_text)
             for song in raw_songs:
                 clean_song = re.sub(r'[^\w\s\-]', '', song).strip()
@@ -145,7 +151,7 @@ class ChatCog(commands.Cog):
 
         user_in_voice = hasattr(message.author, 'voice') and message.author.voice is not None
 
-        if song_recommendations:
+        if song_requested and song_recommendations:
             songs_list = ", ".join([s.strip() for s in song_recommendations])
             queries_list = ", ".join([f">> {s.strip()}" for s in song_recommendations])
             json_response = {
@@ -201,6 +207,34 @@ class ChatCog(commands.Cog):
         else:
             await message.reply(response_text, mention_author=False)
 
+    @staticmethod
+    def _is_song_request(content: str) -> bool:
+        """True only when user explicitly asks to play/listen music."""
+        msg = (content or "").lower()
+        patterns = [
+            r"\bplay\b",
+            r"\bplay\s+song\b",
+            r"\bsong\b",
+            r"\bmusic\b",
+            r"\bbaja\b",
+            r"\bsunao\b",
+            r"\bsuna\s*de\b",
+            r"\bgana\b",
+            r"\bgaana\b",
+        ]
+        return any(re.search(pattern, msg) for pattern in patterns)
+
+    @staticmethod
+    def _strip_song_json(text: str) -> str:
+        """Remove inline {'song','query'} JSON blocks from text."""
+        if not text:
+            return text
+        return re.sub(
+            r'\s*\{\s*"song"\s*:\s*".*?"\s*,\s*"query"\s*:\s*".*?"\s*\}\s*',
+            " ",
+            text,
+            flags=re.IGNORECASE | re.DOTALL
+        )
     def _format_user_message_for_memory(self, message: discord.Message, content: str) -> str:
         """Create a speaker-labeled memory line for stronger multi-user context."""
         normalized = " ".join(content.split())
@@ -564,4 +598,5 @@ class ChatCog(commands.Cog):
             remaining = remaining[break_point:]
 
         return chunks
+
 
