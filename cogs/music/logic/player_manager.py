@@ -5,6 +5,7 @@ Player Manager Module - ULTRA-FAST VERSION
 ✅ Optimized FFmpeg for low latency
 ✅ Opus codec preference
 ✅ YouTube cookies support
+✅ Multi-client rotation for format errors
 """
 
 import discord
@@ -16,17 +17,16 @@ import re
 import requests
 import os
 from dotenv import load_dotenv
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from collections import deque
 
 
 logger = logging.getLogger('discord.music.player')
 
-# Load environment variables
 load_dotenv()
 
-# Cookie file path
 COOKIE_FILE = 'cookies.txt'
+
 
 def download_youtube_cookies():
     """Download cookies.txt directly from URL (no encryption)"""
@@ -52,12 +52,12 @@ def download_youtube_cookies():
         return False
 
 
-# Download on module load
 download_youtube_cookies()
 
-# ✅ IMPROVED YT-DLP options - Works with or without Node.js
+
+# ✅ UPDATED YDL_OPTS — fixed format chain
 YDL_OPTS = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
     'quiet': True,
     'skip_download': True,
     'default_search': 'ytsearch',
@@ -65,41 +65,44 @@ YDL_OPTS = {
     'extractor_retries': 5,
     'fragment_retries': 5,
     'ignoreerrors': False,
+    'geo_bypass': True,
+    'geo_bypass_country': 'US',
 }
 
-# Add cookies to YDL_OPTS if file exists
+# Add cookies if file exists
 if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
     YDL_OPTS['cookiefile'] = COOKIE_FILE
     logger.info("✅ YouTube cookies enabled")
 
-# Extractor's specific args for YouTube
-YDL_EXTRACTOR_ARGS = {
-    'youtube': {
-        'player_client': ['default'],  # Try simpler clients first
-        'player_skip': ['configs', 'js', 'hls'],
-    }
-}
+# ✅ Client rotation list — tried in order on failure
+YDL_CLIENT_ATTEMPTS = [
+    {'player_client': ['mweb', 'ios'],   'player_skip': ['configs']},
+    {'player_client': ['ios'],           'player_skip': ['configs']},
+    {'player_client': ['android'],       'player_skip': ['configs']},
+    {'player_client': ['web_creator'],   'player_skip': ['configs']},
+    {'player_client': ['tv_embedded'],   'player_skip': ['configs']},
+]
 
 
-
-# ✅ OPTIMIZED FFmpeg options for LOW LATENCY
+# ✅ OPTIMIZED FFmpeg options
 FFMPEG_OPTS = {
     'before_options': (
         '-reconnect 1 '
         '-reconnect_streamed 1 '
         '-reconnect_delay_max 5 '
-        '-analyzeduration 0 '           # Skip analysis
-        '-probesize 32 '                # Minimal probe
-        '-fflags nobuffer'              # No buffering
+        '-analyzeduration 0 '
+        '-probesize 32 '
+        '-fflags nobuffer'
     ),
     'options': (
-        '-vn '                          # No video
-        '-bufsize 512k '                # Small buffer
-        '-ar 48000 '                    # 48kHz sample rate
-        '-ac 2 '                        # Stereo
-        '-b:a 128k'                     # 128kbps bitrate
+        '-vn '
+        '-bufsize 512k '
+        '-ar 48000 '
+        '-ac 2 '
+        '-b:a 128k'
     )
 }
+
 
 class Song:
     """Represents a song/track"""
@@ -111,7 +114,7 @@ class Song:
         self.duration = duration
         self.thumbnail = thumbnail
         self.requester = requester
-    
+
     @property
     def duration_str(self) -> str:
         if self.duration <= 0:
@@ -123,14 +126,16 @@ class Song:
             return f"{hours}:{mins:02d}:{secs:02d}"
         return f"{mins}:{secs:02d}"
 
+
 class MusicPlayer:
     """
     Manages music playback with SPEED OPTIMIZATIONS
     ✅ Pre-extraction
     ✅ Background pre-loading
     ✅ Low latency FFmpeg
+    ✅ Multi-client rotation
     """
-    
+
     def __init__(self, guild: discord.Guild, bot):
         self.guild = guild
         self.bot = bot
@@ -140,30 +145,28 @@ class MusicPlayer:
         self.volume: float = 0.5
         self.loop: bool = False
         self.text_channel: discord.TextChannel = None
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)  # Increased workers
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
         self.controller_message: discord.Message = None
-        self._preload_task: Optional[asyncio.Task] = None  
+        self._preload_task: Optional[asyncio.Task] = None
         self._idle_task: Optional[asyncio.Task] = None
 
-    
     @property
     def is_playing(self) -> bool:
         return self.voice_client and self.voice_client.is_playing()
-    
+
     @property
     def is_paused(self) -> bool:
         return self.voice_client and self.voice_client.is_paused()
-    
+
     @property
     def queue_count(self) -> int:
         return len(self.queue)
-    
+
     @property
     def queue_empty(self) -> bool:
         return len(self.queue) == 0
-    
+
     async def connect(self, channel: discord.VoiceChannel) -> bool:
-        """Connect to a voice channel"""
         try:
             if self.voice_client:
                 await self.voice_client.move_to(channel)
@@ -174,13 +177,11 @@ class MusicPlayer:
         except Exception as e:
             logger.error(f"Connection error: {e}")
             return False
-    
+
     async def disconnect(self):
-        # Cancel preload task
         if self._preload_task and not self._preload_task.done():
             self._preload_task.cancel()
 
-        # Shutdown executor
         try:
             self.executor.shutdown(wait=False)
         except Exception:
@@ -192,140 +193,141 @@ class MusicPlayer:
 
         self.queue.clear()
         self.current = None
-        
-
         logger.info(f"Disconnected from {self.guild.name}")
 
-    
     async def extract_audio_url(self, url: str, fast: bool = False) -> Optional[str]:
-        """
-        Extract audio URL with fallback support:
-        1. First try YouTube Music URL
-        2. If extraction fails, try regular YouTube URL
-        Args:
-            fast: If True, prefer speed over quality
-        """
+        """Extract audio URL with YouTube Music → YouTube fallback"""
         loop = asyncio.get_event_loop()
-        
-        # Check if this is a YouTube Music URL
+
         youtube_music_pattern = r'music\.youtube\.com/watch\?v=([a-zA-Z0-9_-]+)'
         match = re.search(youtube_music_pattern, url)
-        
+
         if match:
-            # This is a YouTube Music URL - try both YouTube Music and regular YouTube
             video_id = match.group(1)
             youtube_music_url = url
             youtube_url = f"https://www.youtube.com/watch?v={video_id}"
-            
+
             logger.info(f"Trying YouTube Music first: {youtube_music_url}")
-            
-            # First try YouTube Music
             audio_url = await self._try_extract(loop, youtube_music_url, fast)
-            
+
             if not audio_url:
-                # Fallback to regular YouTube
-                logger.warning(f"YouTube Music extraction failed, trying regular YouTube: {youtube_url}")
+                logger.warning(f"YouTube Music failed, trying regular YouTube: {youtube_url}")
                 audio_url = await self._try_extract(loop, youtube_url, fast)
-            
+
             return audio_url
         else:
-            # Regular YouTube URL - just try once
             return await self._try_extract(loop, url, fast)
-    
+
     async def _try_extract(self, loop, url: str, fast: bool = False) -> Optional[str]:
-        """Helper method to extract audio URL with error handling"""
-        def _extract():
-            opts = YDL_OPTS.copy()
-            opts['extractor_args'] = YDL_EXTRACTOR_ARGS
-            if fast:
-                opts['format'] = 'bestaudio/best'  # Faster format for quick search
-            
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.extract_info(url, download=False)
-        
-        try:
-            info = await loop.run_in_executor(self.executor, _extract)
-            
-            if not info:
+        """✅ Extract with multi-client rotation fallback"""
+
+        for attempt in YDL_CLIENT_ATTEMPTS:
+            def _extract(client_args=attempt):
+                opts = YDL_OPTS.copy()
+                opts['extractor_args'] = {'youtube': client_args}
+                if fast:
+                    opts['format'] = 'bestaudio[ext=webm]/bestaudio/best'
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    return ydl.extract_info(url, download=False)
+
+            try:
+                info = await loop.run_in_executor(self.executor, _extract)
+
+                if not info:
+                    continue
+
+                audio_url = self._get_audio_url(info)
+                if audio_url:
+                    logger.info(f"✅ Extracted using client: {attempt['player_client']}")
+                    return audio_url
+                else:
+                    logger.warning(f"No audio URL with client {attempt['player_client']}, trying next...")
+                    continue
+
+            except yt_dlp.utils.DownloadError as e:
+                err = str(e)
+                if 'Only images' in err or 'format is not available' in err or 'requested format' in err.lower():
+                    logger.warning(f"Client {attempt['player_client']} failed: format issue, rotating...")
+                    continue
+                logger.warning(f"Download error for {url}: {e}")
                 return None
-            
-            return self._get_audio_url(info)
-            
-        except yt_dlp.utils.DownloadError as e:
-            logger.warning(f"Download error for {url}: {e}")
-            return None
-        except yt_dlp.utils.ExtractorError as e:
-            logger.warning(f"Extractor error for {url}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Extraction error for {url}: {e}")
-            return None
-    
+
+            except yt_dlp.utils.ExtractorError as e:
+                logger.warning(f"Extractor error for {url}: {e}")
+                return None
+
+            except Exception as e:
+                logger.error(f"Extraction error for {url}: {e}")
+                return None
+
+        logger.error(f"❌ All clients failed for: {url}")
+        return None
+
     def _get_audio_url(self, info: dict) -> Optional[str]:
         """Extract best audio URL from yt-dlp info"""
+
+        # Handle playlist/search wrapper
+        if info.get('_type') == 'playlist':
+            entries = info.get('entries', [])
+            if entries:
+                info = entries[0]
+            else:
+                return None
+
         audio_url = None
-        
+
         # Method 1: Direct URL
         if info.get('url'):
             audio_url = info.get('url')
-        
-        # Method 2: Check formats array (prefer Opus)
+
+        # Method 2: formats array
         elif 'formats' in info:
             formats = info.get('formats', [])
-            
-            # ✅ Prefer Opus codec (best for Discord)
-            opus_formats = [
-                f for f in formats 
-                if f.get('acodec') == 'opus'
-                and f.get('url')
+
+            # Filter out image-only formats
+            valid_formats = [
+                f for f in formats
+                if f.get('url')
+                and f.get('acodec') not in (None, 'none')
             ]
-            
+
+            if not valid_formats:
+                return None
+
+            # Prefer Opus (best for Discord)
+            opus_formats = [f for f in valid_formats if f.get('acodec') == 'opus']
             if opus_formats:
-                best_opus = max(opus_formats, key=lambda x: x.get('abr', 0) or 0)
-                audio_url = best_opus.get('url')
+                audio_url = max(opus_formats, key=lambda x: x.get('abr', 0) or 0).get('url')
+
             else:
-                # Fallback to audio-only formats
-                audio_formats = [
-                    f for f in formats 
-                    if f.get('acodec') != 'none' 
-                    and f.get('vcodec') == 'none' 
-                    and f.get('url')
-                ]
-                
-                if audio_formats:
-                    best_audio = max(audio_formats, key=lambda x: x.get('abr', 0) or 0)
-                    audio_url = best_audio.get('url')
+                # Audio-only formats
+                audio_only = [f for f in valid_formats if f.get('vcodec') == 'none']
+                if audio_only:
+                    audio_url = max(audio_only, key=lambda x: x.get('abr', 0) or 0).get('url')
                 else:
-                    # Last resort: any format with audio
-                    for fmt in formats:
-                        if fmt.get('acodec') != 'none' and fmt.get('url'):
-                            audio_url = fmt.get('url')
-                            break
-        
+                    audio_url = valid_formats[-1].get('url')
+
         # Method 3: requested_formats
         elif 'requested_formats' in info:
             for fmt in info['requested_formats']:
-                if fmt.get('acodec') != 'none' and fmt.get('url'):
+                if fmt.get('acodec') not in (None, 'none') and fmt.get('url'):
                     audio_url = fmt.get('url')
                     break
-        
+
         return audio_url
-    
+
     async def _preload_next_song(self):
-        """✅ PRE-LOAD next song in background for INSTANT playback"""
+        """Pre-load next song in background for instant playback"""
         if self.queue_empty:
             return
-        
-        # Get next song (without removing from queue)
+
         try:
             next_song = self.queue[0]
         except IndexError:
             return
 
-        # Only extract if pending
         if next_song.source == "pending" and next_song.url:
             logger.info(f"🔄 Pre-loading: {next_song.title[:40]}...")
-            
             try:
                 audio_url = await self.extract_audio_url(next_song.url)
                 if audio_url:
@@ -336,38 +338,25 @@ class MusicPlayer:
             except Exception as e:
                 logger.error(f"Pre-load error: {e}")
 
-
     async def _idle_disconnect(self):
         try:
             await asyncio.sleep(60)
-
-            # If still idle after 60 seconds
             if not self.is_playing and not self.queue:
-                logger.info(f"Idle timeout reached in {self.guild.name}, disconnecting.")
+                logger.info(f"Idle timeout in {self.guild.name}, disconnecting.")
                 await self.disconnect()
-
         except asyncio.CancelledError:
             pass
 
-
-
-
-    
     async def play_song(self, song: Song):
-        """Play a song with INSTANT start"""
-
+        """Play a song with instant start"""
         if not self.voice_client:
             logger.error("No voice client")
             return
-        
-        # Cancel idle timer if playing again
+
         if self._idle_task and not self._idle_task.done():
             self._idle_task.cancel()
 
-
-        # ✅ LAZY EXTRACTION with feedback
         if not song.source or song.source == "pending":
-            # Show extracting indicator
             extracting_msg = None
             if self.text_channel:
                 try:
@@ -378,19 +367,18 @@ class MusicPlayer:
                     extracting_msg = await self.text_channel.send(embed=embed)
                 except:
                     pass
-            
+
             logger.info(f"⏳ Extracting: {song.title[:50]}")
-            
+
             if song.url:
                 audio_url = await self.extract_audio_url(song.url)
-                
-                # Delete extracting message
+
                 if extracting_msg:
                     try:
                         await extracting_msg.delete()
                     except:
                         pass
-                
+
                 if audio_url:
                     song.source = audio_url
                     logger.info(f"✓ Extracted: {song.title[:50]}")
@@ -413,7 +401,6 @@ class MusicPlayer:
             return
 
         self.current = song
-        
 
         try:
             logger.info(f"▶ Playing: {song.title[:50]}")
@@ -422,10 +409,8 @@ class MusicPlayer:
 
             self.voice_client.play(source, after=lambda e: self._after_play(e))
 
-            # Delete old controller
             await self.delete_controller()
 
-            # Send new controller
             if self.text_channel:
                 try:
                     try:
@@ -440,16 +425,12 @@ class MusicPlayer:
                     self.controller_message = message
                 except Exception as e:
                     logger.error(f"Controller error: {e}")
-            
-            # ✅ START PRE-LOADING NEXT SONG (background)
-            # Cancel previous preload task if running
+
             if self._preload_task and not self._preload_task.done():
                 self._preload_task.cancel()
 
-            # Start new preload task
             if not self.queue_empty:
                 self._preload_task = asyncio.create_task(self._preload_next_song())
-
 
         except Exception as e:
             logger.error(f"Playback error: {e}")
@@ -458,31 +439,24 @@ class MusicPlayer:
             await self.play_next()
 
     def _after_play(self, error):
-        """Called after a song finishes"""
         if error:
             logger.error(f"Player error: {error}")
-
         asyncio.run_coroutine_threadsafe(self.play_next(), self.bot.loop)
 
     async def play_next(self):
-        """Play the next song (pre-loaded = INSTANT)"""
         if self.loop and self.current:
             self.queue.appendleft(self.current)
 
         finished_song = self.current
 
         if not self.queue:
-            
             self.current = None
 
-            # 🔥 Start idle disconnect timer
             if self._idle_task and not self._idle_task.done():
                 self._idle_task.cancel()
 
             self._idle_task = asyncio.create_task(self._idle_disconnect())
-
             await self.delete_controller()
-
 
             if self.text_channel and finished_song:
                 try:
@@ -493,10 +467,8 @@ class MusicPlayer:
                     await self.text_channel.send(embed=embed, delete_after=15)
                 except:
                     pass
-
             return
 
-        # Delete old controller
         if self.controller_message:
             try:
                 await self.controller_message.delete()
@@ -504,78 +476,61 @@ class MusicPlayer:
                 pass
             self.controller_message = None
 
-        # ✅ Play next song (likely already pre-loaded = INSTANT)
         if self.queue:
             song = self.queue.popleft()
             await self.play_song(song)
-    
+
     async def add_to_queue(self, song: Song) -> int:
-        """Add song to queue (returns 0 if playing immediately)"""
         if not self.is_playing and not self.is_paused:
             await self.play_song(song)
             return 0
         else:
             self.queue.append(song)
             return len(self.queue)
-    
+
     async def pause(self):
-        """Pause playback"""
         if self.voice_client:
             self.voice_client.pause()
-    
+
     async def resume(self):
-        """Resume playback"""
         if self.voice_client:
             self.voice_client.resume()
-    
+
     async def skip(self) -> Optional[Song]:
-        """Skip current song"""
         if self.voice_client:
             self.voice_client.stop()
         return self.current
-    
+
     async def stop(self):
-        """Stop playback and clear queue"""
         self.queue.clear()
         if self.voice_client:
             self.voice_client.stop()
         self.current = None
-        
-    
+
     def set_volume(self, volume: int):
-        """Set volume (0-100)"""
         self.volume = volume / 100
         if self.voice_client and self.voice_client.source:
             self.voice_client.source.volume = self.volume
-    
+
     def get_queue_list(self, limit: int = 10) -> list:
-        """Get queue as list"""
         return list(self.queue)[:limit]
-    
+
     def clear_queue(self):
-        """Clear the queue"""
         self.queue.clear()
-    
+
     def shuffle_queue(self):
-        """Shuffle the queue"""
         import random
         items = list(self.queue)
         random.shuffle(items)
         self.queue = deque(items)
-    
+
     async def check_empty_channel(self):
         if not self.voice_client:
             return
-
         channel = self.voice_client.channel
         if not channel:
             return
-
-        non_bot_members = [
-            member for member in channel.members
-            if not member.bot
-        ]
-
+        non_bot_members = [m for m in channel.members if not m.bot]
         if len(non_bot_members) == 0:
             await self.disconnect()
 
@@ -588,47 +543,42 @@ class MusicPlayer:
             self.controller_message = None
 
     def remove_from_queue(self, position: int) -> Optional[Song]:
-        """Remove song at position (1-based)"""
         if position < 1 or position > len(self.queue):
             return None
-        
         items = list(self.queue)
         removed = items.pop(position - 1)
         self.queue = deque(items)
         return removed
 
+
 class PlayerManager:
     """Manages MusicPlayer instances for all guilds"""
-    
+
     def __init__(self, bot):
         self.bot = bot
         self.players: Dict[int, MusicPlayer] = {}
-    
+
     def get_player(self, guild: discord.Guild) -> MusicPlayer:
-        """Get or create a player for a guild"""
         if guild.id not in self.players:
             self.players[guild.id] = MusicPlayer(guild, self.bot)
         return self.players[guild.id]
-    
+
     async def connect_to_voice(self, channel: discord.VoiceChannel) -> MusicPlayer:
-        """Connect to a voice channel"""
         player = self.get_player(channel.guild)
         await player.connect(channel)
         return player
-    
+
     async def disconnect(self, guild: discord.Guild):
-        """Disconnect from a guild"""
         try:
             if guild.id in self.players:
                 await self.players[guild.id].disconnect()
                 del self.players[guild.id]
                 logger.info(f"Disconnected from {guild.name} (ID: {guild.id})")
         except KeyError:
-            logger.debug(f"No active player to disconnect for guild {guild.id}")
+            logger.debug(f"No active player for guild {guild.id}")
         except Exception as e:
             logger.error(f"Error disconnecting from {guild.name}: {e}")
-    
+
     def remove_player(self, guild_id: int):
-        """Remove player for a guild"""
         if guild_id in self.players:
             del self.players[guild_id]
