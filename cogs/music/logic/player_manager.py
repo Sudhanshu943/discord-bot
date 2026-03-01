@@ -443,7 +443,7 @@ class MusicPlayer:
             if self.text_channel:
                 try:
                     try:
-                        from .ui import MusicEmbeds, MusicControlsView
+                        from ui import MusicEmbeds, MusicControlsView
                     except ImportError:
                         from cogs.music.ui import MusicEmbeds, MusicControlsView
 
