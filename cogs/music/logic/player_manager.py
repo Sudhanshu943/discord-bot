@@ -589,9 +589,15 @@ class MusicPlayer:
         return False
     
     async def add_to_queue(self, song: Song):
-        """Add song to queue and return position"""
-        self.queue.append(song)
-        return len(self.queue) - 1
+        """Add song to queue and auto-play if idle"""
+        
+        if not self.is_playing and not self.is_paused and not self.current:
+            # Play immediately if nothing is playing
+            await self.play_song(song)
+            return 0
+        else:
+            self.queue.append(song)
+            return len(self.queue)
     
     async def check_empty_channel(self):
         """Check if voice channel is empty and disconnect if needed"""
