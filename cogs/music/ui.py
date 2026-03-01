@@ -273,8 +273,6 @@ class MusicControlsView(discord.ui.View):
         cleared = self.player.queue_count
         self.player.clear_queue()
         await interaction.response.send_message(f"🗑️ Cleared **{cleared}** tracks", ephemeral=True)
-   
-
 
     def _on_cooldown(self) -> bool:
         now = asyncio.get_event_loop().time()
@@ -292,20 +290,6 @@ class MusicControlsView(discord.ui.View):
             return False
 
         return user_voice.channel == self.player.voice_client.channel
-
-    def __init__(self, player, timeout: float = 300, auto_delete: bool = False):
-        super().__init__(timeout=timeout)
-        self.player = player
-        self.message: Optional[discord.Message] = None
-        self.auto_delete = auto_delete
-        self._last_action_time = 0
-        self._cooldown_seconds = 2
-
-        self._update_states()
-        
-        # Only start monitoring if auto_delete is True
-        if auto_delete:
-            self.monitor_task = asyncio.create_task(self._monitor_playback())
 
     async def _monitor_playback(self):
         """Monitor playback and delete controller when music ends"""
