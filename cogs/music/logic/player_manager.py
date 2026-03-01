@@ -55,33 +55,31 @@ def download_youtube_cookies():
 download_youtube_cookies()
 
 
-# ✅ UPDATED YDL_OPTS — fixed format chain
+# ✅ SIMPLE & FAST — cookies ke saath best working config
 YDL_OPTS = {
-    'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
+    'format': 'bestaudio/best',          # simple rakhho
     'quiet': True,
     'skip_download': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
-    'extractor_retries': 5,
-    'fragment_retries': 5,
-    'ignoreerrors': False,
+    'extractor_retries': 3,
+    'fragment_retries': 3,
+    'ignoreerrors': True,                # ← errors pe skip karo, ruko mat
     'geo_bypass': True,
-    'geo_bypass_country': 'US',
+    'check_formats': False,              # ← format check skip = faster
+    'no_check_certificate': True,
 }
 
-# Add cookies if file exists
 if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
     YDL_OPTS['cookiefile'] = COOKIE_FILE
     logger.info("✅ YouTube cookies enabled")
 
-# ✅ Client rotation list — tried in order on failure
+# ✅ SIRF 2 clients — fast aur cookie compatible
 YDL_CLIENT_ATTEMPTS = [
-    {'player_client': ['mweb', 'ios'],   'player_skip': ['configs']},
-    {'player_client': ['ios'],           'player_skip': ['configs']},
-    {'player_client': ['android'],       'player_skip': ['configs']},
-    {'player_client': ['web_creator'],   'player_skip': ['configs']},
-    {'player_client': ['tv_embedded'],   'player_skip': ['configs']},
+    {'player_client': ['mweb'],  'player_skip': ['configs']},
+    {'player_client': ['web'],   'player_skip': ['configs']},
 ]
+
 
 
 # ✅ OPTIMIZED FFmpeg options
@@ -219,103 +217,59 @@ class MusicPlayer:
             return await self._try_extract(loop, url, fast)
 
     async def _try_extract(self, loop, url: str, fast: bool = False) -> Optional[str]:
-        """✅ Extract with multi-client rotation fallback"""
+        def _extract():
+            opts = YDL_OPTS.copy()
+            opts['extractor_args'] = {
+                'youtube': {
+                    'player_client': ['mweb', 'web'],
+                    'player_skip': ['configs'],
+                }
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
 
-        for attempt in YDL_CLIENT_ATTEMPTS:
-            def _extract(client_args=attempt):
-                opts = YDL_OPTS.copy()
-                opts['extractor_args'] = {'youtube': client_args}
-                if fast:
-                    opts['format'] = 'bestaudio[ext=webm]/bestaudio/best'
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    return ydl.extract_info(url, download=False)
-
-            try:
-                info = await loop.run_in_executor(self.executor, _extract)
-
-                if not info:
-                    continue
-
-                audio_url = self._get_audio_url(info)
-                if audio_url:
-                    logger.info(f"✅ Extracted using client: {attempt['player_client']}")
-                    return audio_url
-                else:
-                    logger.warning(f"No audio URL with client {attempt['player_client']}, trying next...")
-                    continue
-
-            except yt_dlp.utils.DownloadError as e:
-                err = str(e)
-                if 'Only images' in err or 'format is not available' in err or 'requested format' in err.lower():
-                    logger.warning(f"Client {attempt['player_client']} failed: format issue, rotating...")
-                    continue
-                logger.warning(f"Download error for {url}: {e}")
+        try:
+            info = await loop.run_in_executor(self.executor, _extract)
+            if not info:
                 return None
+            return self._get_audio_url(info)
 
-            except yt_dlp.utils.ExtractorError as e:
-                logger.warning(f"Extractor error for {url}: {e}")
-                return None
-
-            except Exception as e:
-                logger.error(f"Extraction error for {url}: {e}")
-                return None
-
-        logger.error(f"❌ All clients failed for: {url}")
-        return None
+        except Exception as e:
+            logger.warning(f"Extraction failed for {url}: {e}")
+            return None
 
     def _get_audio_url(self, info: dict) -> Optional[str]:
-        """Extract best audio URL from yt-dlp info"""
-
-        # Handle playlist/search wrapper
+        # Playlist wrapper handle
         if info.get('_type') == 'playlist':
             entries = info.get('entries', [])
             if entries:
                 info = entries[0]
             else:
                 return None
-
-        audio_url = None
-
-        # Method 1: Direct URL
+    
+        # ✅ Direct URL — sabse fast
         if info.get('url'):
-            audio_url = info.get('url')
-
-        # Method 2: formats array
-        elif 'formats' in info:
-            formats = info.get('formats', [])
-
-            # Filter out image-only formats
-            valid_formats = [
+            return info.get('url')
+    
+        # ✅ Formats se best audio
+        formats = info.get('formats', [])
+        if formats:
+            # Sirf audio wale lo
+            audio = [
                 f for f in formats
-                if f.get('url')
-                and f.get('acodec') not in (None, 'none')
+                if f.get('url') and f.get('acodec') not in (None, 'none')
             ]
-
-            if not valid_formats:
-                return None
-
-            # Prefer Opus (best for Discord)
-            opus_formats = [f for f in valid_formats if f.get('acodec') == 'opus']
-            if opus_formats:
-                audio_url = max(opus_formats, key=lambda x: x.get('abr', 0) or 0).get('url')
-
-            else:
-                # Audio-only formats
-                audio_only = [f for f in valid_formats if f.get('vcodec') == 'none']
-                if audio_only:
-                    audio_url = max(audio_only, key=lambda x: x.get('abr', 0) or 0).get('url')
-                else:
-                    audio_url = valid_formats[-1].get('url')
-
-        # Method 3: requested_formats
-        elif 'requested_formats' in info:
-            for fmt in info['requested_formats']:
-                if fmt.get('acodec') not in (None, 'none') and fmt.get('url'):
-                    audio_url = fmt.get('url')
-                    break
-
-        return audio_url
-
+            if audio:
+                # Best bitrate wala
+                return max(audio, key=lambda x: x.get('abr', 0) or 0).get('url')
+            
+            # Kuch bhi mila toh de do
+            for f in reversed(formats):
+                if f.get('url'):
+                    return f.get('url')
+    
+        return None
+    
     async def _preload_next_song(self):
         """Pre-load next song in background for instant playback"""
         if self.queue_empty:
