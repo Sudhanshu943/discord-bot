@@ -7,3 +7,4 @@ ytmusicapi
 aiohttp
 groq>=0.4.0
 requests
+cryptography

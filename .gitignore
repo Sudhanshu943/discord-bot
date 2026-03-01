@@ -88,3 +88,7 @@ docker-compose.override.yml
 htmlcov/
 .coverage
 .pytest_cache/
+
+
+runs.py
+cookies.txt

@@ -28,26 +28,59 @@ load_dotenv()
 # Cookie file path
 COOKIE_FILE = 'cookies.txt'
 
+from cryptography.fernet import Fernet
+
 def download_youtube_cookies():
-    """Download YouTube cookies.txt from URL specified in .env"""
-    cookie_url = os.getenv('YOUTUBE_COOKIE_URL')
-    
-    if not cookie_url:
-        logger.info("YouTube cookie URL not configured in .env")
-        return False
-    
+    """
+    Securely fetch + decrypt YouTube cookies at runtime.
+    Supports 3 modes via .env:
+      1. YOUTUBE_COOKIE_URL + COOKIE_ENCRYPT_KEY  → Encrypted remote file
+      2. YOUTUBE_COOKIE_ENCRYPTED + COOKIE_ENCRYPT_KEY → Encrypted env var (no URL)
+      3. YOUTUBE_COOKIE_URL only → Plain fetch (legacy fallback)
+    """
+    encrypt_key    = os.getenv('COOKIE_ENCRYPT_KEY')
+    cookie_url     = os.getenv('YOUTUBE_COOKIE_URL')
+    encrypted_blob = os.getenv('YOUTUBE_COOKIE_ENCRYPTED')
+
     try:
-        logger.info("Downloading YouTube cookies...")
-        response = requests.get(cookie_url, timeout=30)
-        response.raise_for_status()
-        
-        with open(COOKIE_FILE, 'w', encoding='utf-8') as f:
-            f.write(response.text)
-        
-        logger.info("✅ YouTube cookies downloaded successfully")
-        return True
+        # ── Mode 2: Encrypted blob directly in env var (best for cloud) ──
+        if encrypted_blob and encrypt_key:
+            logger.info("🔐 Decrypting cookies from env var...")
+            f = Fernet(encrypt_key.encode())
+            decrypted = f.decrypt(encrypted_blob.encode()).decode()
+            with open(COOKIE_FILE, 'w', encoding='utf-8') as file:
+                file.write(decrypted)
+            logger.info("✅ Cookies decrypted and written from env var")
+            return True
+
+        # ── Mode 1: Fetch from URL then decrypt ──
+        elif cookie_url and encrypt_key:
+            logger.info("🔐 Fetching encrypted cookies from URL...")
+            response = requests.get(cookie_url, timeout=30)
+            response.raise_for_status()
+            f = Fernet(encrypt_key.encode())
+            decrypted = f.decrypt(response.text.strip().encode()).decode()
+            with open(COOKIE_FILE, 'w', encoding='utf-8') as file:
+                file.write(decrypted)
+            logger.info("✅ Encrypted cookies fetched and decrypted")
+            return True
+
+        # ── Mode 3: Legacy plain URL (no encryption) ──
+        elif cookie_url:
+            logger.warning("⚠️ Fetching cookies without encryption (not recommended)")
+            response = requests.get(cookie_url, timeout=30)
+            response.raise_for_status()
+            with open(COOKIE_FILE, 'w', encoding='utf-8') as file:
+                file.write(response.text)
+            logger.info("✅ Cookies downloaded (unencrypted)")
+            return True
+
+        else:
+            logger.info("No cookie source configured in .env")
+            return False
+
     except Exception as e:
-        logger.error(f"❌ Failed to download YouTube cookies: {e}")
+        logger.error(f"❌ Failed to load YouTube cookies: {e}")
         return False
 
 # Download cookies on module load
