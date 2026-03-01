@@ -118,15 +118,6 @@ class MusicEmbeds:
             color=MusicEmbeds.COLOR_SUCCESS
         )
         return embed
-    
-    @staticmethod
-    def info(message: str, title: str = "Info") -> discord.Embed:
-        """Informational message"""
-        embed = discord.Embed(
-            description=f"### ℹ️ {message}",
-            color=MusicEmbeds.COLOR_QUEUE
-        )
-        return embed
 
 
 class MusicControlsView(discord.ui.View):

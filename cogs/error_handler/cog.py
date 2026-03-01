@@ -110,8 +110,12 @@ class ErrorHandler(commands.Cog):
                 return  # Silent return - interaction already expired
             await send_error("❌ The resource was not found!")
         
-        # Discord ConnectionClosed (network issues)
-        elif isinstance(error, discord.ConnectionClosed):
+        # Discord Gateway errors (network issues)
+        elif isinstance(error, discord.errors.GatewayError):
+            await send_error("⚠️ Network issue detected. Please try again in a moment.")
+        
+        # Discord ConnectionClosed
+        elif isinstance(error, discord.errors.ConnectionClosed):
             await send_error("⚠️ Connection closed. Please try again.")
         
         # Unknown error - log it

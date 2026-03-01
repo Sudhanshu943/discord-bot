@@ -108,6 +108,7 @@ class ChatCog(commands.Cog):
             raise ChatException("Failed to process request")
 
     # ==================== Helper: Send Response ====================
+
     async def _send_response(
         self,
         message: discord.Message,
@@ -116,23 +117,20 @@ class ChatCog(commands.Cog):
         provider: Optional[str]
     ) -> None:
         """Format and send the AI response to Discord."""
-        song_requested = self._is_song_request(content)
-
+        # Format response text
         if self.config.features.show_provider and provider:
             bot_name = self.bot.user.name.lower()
             response_text = f"{response}\n\n> *— {bot_name}*"
         else:
             response_text = response
 
-        # Hide any inline song/query JSON from Discord-visible text.
-        response_text = self._strip_song_json(response_text).strip()
-        if not response_text:
-            response_text = "Done."
-
+        # Check for song recommendations (>> format) in AI response
         song_recommendations = []
-        json_match = re.search(r'\{.*?\}', response, re.DOTALL)
 
-        if song_requested and json_match:
+        # 1️⃣ Try structured JSON extraction first
+        json_match = re.search(r'\{.*?\}', response_text, re.DOTALL)
+        
+        if json_match:
             try:
                 parsed = json.loads(json_match.group())
                 if isinstance(parsed, dict) and "song" in parsed:
@@ -141,24 +139,23 @@ class ChatCog(commands.Cog):
                         song_recommendations.append(clean_song)
             except json.JSONDecodeError:
                 pass
-
-        if song_requested and not song_recommendations:
+            
+        # 2️⃣ Fallback to >> extraction if no valid JSON found
+        if not song_recommendations:
             raw_songs = self.music_integration.extract_songs_from_text(response_text)
             for song in raw_songs:
                 clean_song = re.sub(r'[^\w\s\-]', '', song).strip()
                 if clean_song:
                     song_recommendations.append(clean_song)
+        
 
-        if song_requested and not song_recommendations:
-            extracted_song, extracted_query = self._extract_song_query_from_content(content)
-            if extracted_song and extracted_query:
-                song_recommendations.append(extracted_song)
-
+        # Only auto-play if user is in a voice channel
         user_in_voice = hasattr(message.author, 'voice') and message.author.voice is not None
 
-        if song_requested and song_recommendations:
+        if song_recommendations:
             songs_list = ", ".join([s.strip() for s in song_recommendations])
             queries_list = ", ".join([f">> {s.strip()}" for s in song_recommendations])
+
             json_response = {
                 "person": message.author.name,
                 "action": "playing" if user_in_voice else "suggesting",
@@ -169,11 +166,13 @@ class ChatCog(commands.Cog):
             logger.info(f"📥 IN: {content}")
             logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
 
-            await message.reply(
-                json.dumps({"song": songs_list, "query": queries_list}, ensure_ascii=False),
-                mention_author=False
-            )
+            if len(response_text) > 2000:
+                for chunk in self._split_message(response_text, 2000):
+                    await message.reply(chunk, mention_author=False)
+            else:
+                await message.reply(response_text, mention_author=False)
 
+            # Auto-play only if user is in a voice channel
             if user_in_voice:
                 for song_query in song_recommendations:
                     if song_query.strip():
@@ -181,128 +180,37 @@ class ChatCog(commands.Cog):
                             message, song_query.strip()
                         )
                         await message.reply(play_response, mention_author=False)
-            return
-
-        json_response = {
-            "person": message.author.name,
-            "action": "chat",
-            "chat": response[:500] if len(response) > 500 else response,
-            "song": "",
-            "query": ""
-        }
-        logger.info(f"📥 IN: {content}")
-        logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
-
-        if len(response_text) > 2000:
-            for chunk in self._split_message(response_text, 2000):
-                await message.reply(chunk, mention_author=False)
+            else:
+                # User not in voice channel - just suggest the songs
+                suggest_embed = discord.Embed(
+                    title="🎵 Song Suggestions",
+                    description=f"**{songs_list}**",
+                    color=discord.Color.blue()
+                )
+                suggest_embed.add_field(
+                    name="Join a voice channel to play",
+                    value="Use `/play` or `/join` to play these songs",
+                    inline=False
+                )
+                await message.reply(embed=suggest_embed, mention_author=False)
         else:
-            await message.reply(response_text, mention_author=False)
+            json_response = {
+                "person": message.author.name,
+                "action": "chat",
+                "chat": response[:500] if len(response) > 500 else response,
+                "song": "",
+                "query": ""
+            }
+            logger.info(f"📥 IN: {content}")
+            logger.info(f"📤 OUT: {json.dumps(json_response, indent=2)}")
 
-    @staticmethod
-    def _is_song_request(content: str) -> bool:
-        """True only when user explicitly asks to play/listen music."""
-        msg = (content or "").lower()
-        patterns = [
-            r"\bplay\b",
-            r"\bplay\s+song\b",
-            r"\bsong\b",
-            r"\bmusic\b",
-            r"\bbaja\b",
-            r"\bsunao\b",
-            r"\bsuna\s*de\b",
-            r"\bgana\b",
-            r"\bgaana\b",
-        ]
-        return any(re.search(pattern, msg) for pattern in patterns)
+            if len(response_text) > 2000:
+                for chunk in self._split_message(response_text, 2000):
+                    await message.reply(chunk, mention_author=False)
+            else:
+                await message.reply(response_text, mention_author=False)
 
-    @staticmethod
-    def _extract_song_query_from_content(content: str) -> Tuple[str, str]:
-        """Extract song title/query from explicit user request text."""
-        text = (content or "").strip()
-        lowered = text.lower()
-        if not text:
-            return "", ""
-
-        patterns = [
-            r'^\s*play\s+song\s+(.+?)\s*$',
-            r'^\s*play\s+(.+?)\s*$',
-            r'^\s*baja\s+(.+?)\s*$',
-            r'^\s*sunao\s+(.+?)\s*$',
-            r'^\s*suna\s+de\s+(.+?)\s*$',
-        ]
-
-        for pattern in patterns:
-            match = re.match(pattern, lowered, flags=re.IGNORECASE)
-            if not match:
-                continue
-            query = match.group(1).strip()
-            if not query:
-                continue
-            if "trending" in query and "song" in query:
-                return "Trending Song", "trending song"
-            return query.title(), query
-
-        if "trending song" in lowered:
-            return "Trending Song", "trending song"
-
-        return "", ""
-
-    @staticmethod
-    def _strip_song_json(text: str) -> str:
-        """Remove inline {'song','query'} JSON blocks from text."""
-        if not text:
-            return text
-        return re.sub(
-            r'\s*\{\s*"song"\s*:\s*".*?"\s*,\s*"query"\s*:\s*".*?"\s*\}\s*',
-            " ",
-            text,
-            flags=re.IGNORECASE | re.DOTALL
-        )
-    def _format_user_message_for_memory(self, message: discord.Message, content: str) -> str:
-        """Create a speaker-labeled memory line for stronger multi-user context."""
-        normalized = " ".join(content.split())
-        return f"[User: {message.author.display_name} (ID: {message.author.id})] {normalized}"
-
-    async def _is_reply_to_bot(self, message: discord.Message) -> bool:
-        """Robustly determine if message replies to the bot, even when reference is unresolved."""
-        if not message.reference:
-            return False
-
-        resolved = message.reference.resolved
-        if resolved is None and message.reference.message_id and hasattr(message.channel, "fetch_message"):
-            try:
-                resolved = await message.channel.fetch_message(message.reference.message_id)
-            except Exception:
-                return False
-
-        return bool(
-            resolved and
-            getattr(resolved, "author", None) and
-            resolved.author.id == self.bot.user.id
-        )
-
-    async def _store_passive_context(self, message: discord.Message, content: str) -> None:
-        """Store non-trigger chat messages so the next bot query sees recent group discussion."""
-        if not content or not content.strip():
-            return
-
-        formatted = self._format_user_message_for_memory(message, content)
-        await self.memory_manager.add_to_channel_memory(
-            message.channel.id,
-            "user",
-            formatted,
-            message.author.id
-        )
-
-        if message.guild:
-            await self.memory_manager.add_to_guild_memory(
-                message.guild.id,
-                "user",
-                formatted,
-                message.author.id
-            )
-# ==================== Commands ====================
+    # ==================== Commands ====================
 
     @commands.hybrid_command(name="ask", description="Ask the AI a question")
     @app_commands.describe(question="Your question for the AI")
@@ -420,14 +328,13 @@ class ChatCog(commands.Cog):
         dedicated_channels = self.config.get_dedicated_channels()
         is_dedicated_channel = message.channel.id in dedicated_channels
         bot_mentioned = self.bot.user in message.mentions
-        is_reply_to_bot = await self._is_reply_to_bot(message)
+        is_reply_to_bot = (
+            message.reference and
+            message.reference.resolved and
+            message.reference.resolved.author.id == self.bot.user.id
+        )
 
         if not (is_dedicated_channel or bot_mentioned or is_reply_to_bot):
-            # Capture background conversation for future context understanding.
-            try:
-                await self._store_passive_context(message, message.content)
-            except Exception as e:
-                logger.error(f"Failed to store passive context: {e}")
             return
 
         if isinstance(message.channel, discord.DMChannel) and not self.config.features.allow_dm:
@@ -475,8 +382,21 @@ class ChatCog(commands.Cog):
             return
 
         # --- Direct play request (Hindi + English) ---
-        extracted_song, extracted_query = self._extract_song_query_from_content(content)
-        if extracted_song and extracted_query:
+        play_song_match = None
+        play_patterns = [
+            r'play\s+(.+)',
+            r'play\s+song\s+(.+)',
+            r'baja\s+(.+)',
+            r'sunao\s+(.+)',
+            r'suna\s+de\s+(.+)'
+        ]
+        for pattern in play_patterns:
+            match = re.match(pattern, msg_lower)
+            if match:
+                play_song_match = match.group(1).strip()
+                break
+
+        if play_song_match:
             json_response = {
                 "person": message.author.name,
                 "action": "playing",
@@ -609,5 +529,3 @@ class ChatCog(commands.Cog):
             remaining = remaining[break_point:]
 
         return chunks
-
-
