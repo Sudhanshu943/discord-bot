@@ -911,3 +911,4 @@ async def setup(bot):
     """Setup function to load the music cog"""
     await bot.add_cog(Music(bot))
     logger.info("⚡ Music cog loaded - ULTRA-FAST mode active")
+    await bot.player_manager.init_cookies()
