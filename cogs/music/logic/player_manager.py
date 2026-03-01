@@ -183,6 +183,10 @@ class MusicPlayer:
     def queue_empty(self) -> bool:
         return len(self.queue) == 0
     
+    def get_queue_list(self, limit: int = 10) -> list:
+        """Get list of queued songs up to the specified limit"""
+        return list(self.queue)[:limit]
+    
     async def connect(self, channel: discord.VoiceChannel) -> bool:
         """Connect to a voice channel"""
         try:
