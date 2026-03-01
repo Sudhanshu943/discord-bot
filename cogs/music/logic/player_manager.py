@@ -120,6 +120,29 @@ class Song:
             return f"{hours}:{mins:02d}:{secs:02d}"
         return f"{mins}:{secs:02d}"
 
+
+class PlayerManager:
+    """Manages multiple music players for different guilds"""
+    def __init__(self, bot):
+        self.bot = bot
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        self.players = {}
+        
+    def get_player(self, guild):
+        if guild.id not in self.players:
+            self.players[guild.id] = MusicPlayer(guild, self)
+        return self.players[guild.id]
+        
+    def remove_player(self, guild_id):
+        if guild_id in self.players:
+            del self.players[guild_id]
+            
+    async def disconnect(self, guild):
+        player = self.get_player(guild)
+        await player.disconnect()
+        self.remove_player(guild.id)
+
+
 class MusicPlayer:
     """
     Manages music playback with SPEED OPTIMIZATIONS
@@ -128,16 +151,17 @@ class MusicPlayer:
     ✅ Low latency FFmpeg
     """
     
-    def __init__(self, guild: discord.Guild, bot):
+    def __init__(self, guild: discord.Guild, player_manager):
         self.guild = guild
-        self.bot = bot
+        self.player_manager = player_manager
+        self.bot = player_manager.bot
         self.voice_client: discord.VoiceClient = None
         self.queue: deque = deque()
         self.current: Song = None
         self.volume: float = 0.5
         self.loop: bool = False
         self.text_channel: discord.TextChannel = None
-        self.executor = bot.player_manager.executor
+        self.executor = player_manager.executor
         self.controller_message: discord.Message = None
         self._preload_task: Optional[asyncio.Task] = None  
         self._idle_task: Optional[asyncio.Task] = None
@@ -347,7 +371,7 @@ class MusicPlayer:
 
 
 
-
+    
     
     async def play_song(self, song: Song):
         """Play a song with INSTANT start"""
@@ -498,142 +522,84 @@ class MusicPlayer:
             return
 
         # Delete old controller
+        await self.delete_controller()
+
+        # Get next song (pre-loaded = INSTANT)
+        next_song = self.queue.popleft()
+        
+        # Play next song
+        await self.play_song(next_song)
+    
+    async def delete_controller(self):
+        """Delete the controller message if it exists"""
         if self.controller_message:
             try:
                 await self.controller_message.delete()
             except:
                 pass
             self.controller_message = None
-
-        # ✅ Play next song (likely already pre-loaded = INSTANT)
-        if self.queue:
-            song = self.queue.popleft()
-            await self.play_song(song)
-    
-    async def add_to_queue(self, song: Song) -> int:
-        """Add song to queue (returns 0 if playing immediately)"""
-        if not self.is_playing and not self.is_paused:
-            await self.play_song(song)
-            return 0
-        else:
-            self.queue.append(song)
-            return len(self.queue)
     
     async def pause(self):
         """Pause playback"""
-        if self.voice_client:
+        if self.voice_client and self.voice_client.is_playing():
             self.voice_client.pause()
+            return True
+        return False
     
     async def resume(self):
         """Resume playback"""
-        if self.voice_client:
+        if self.voice_client and self.voice_client.is_paused():
             self.voice_client.resume()
+            return True
+        return False
     
-    async def skip(self) -> Optional[Song]:
+    async def skip(self):
         """Skip current song"""
-        if self.voice_client:
+        if self.voice_client and self.voice_client.is_playing():
             self.voice_client.stop()
-        return self.current
+            return True
+        return False
     
     async def stop(self):
         """Stop playback and clear queue"""
-        self.queue.clear()
         if self.voice_client:
             self.voice_client.stop()
-        self.current = None
-        
+            
+            # Cancel preload task
+            if self._preload_task and not self._preload_task.done():
+                self._preload_task.cancel()
+                try:
+                    await self._preload_task
+                except:
+                    pass
+            
+            # Cancel idle task
+            if self._idle_task and not self._idle_task.done():
+                self._idle_task.cancel()
+                try:
+                    await self._idle_task
+                except:
+                    pass
+            
+            self.queue.clear()
+            self.current = None
+            
+            await self.disconnect()
+            return True
+        return False
     
-    def set_volume(self, volume: int):
-        """Set volume (0-100)"""
-        self.volume = volume / 100
-        if self.voice_client and self.voice_client.source:
-            self.voice_client.source.volume = self.volume
-    
-    def get_queue_list(self, limit: int = 10) -> list:
-        """Get queue as list"""
-        return list(self.queue)[:limit]
-    
-    def clear_queue(self):
-        """Clear the queue"""
-        self.queue.clear()
-    
-    def shuffle_queue(self):
-        """Shuffle the queue"""
-        import random
-        items = list(self.queue)
-        random.shuffle(items)
-        self.queue = deque(items)
+    async def add_to_queue(self, song: Song):
+        """Add song to queue and return position"""
+        self.queue.append(song)
+        return len(self.queue) - 1
     
     async def check_empty_channel(self):
-        if not self.voice_client:
-            return
-
-        channel = self.voice_client.channel
-        if not channel:
-            return
-
-        non_bot_members = [
-            member for member in channel.members
-            if not member.bot
-        ]
-
-        if len(non_bot_members) == 0:
-            await self.disconnect()
-
-    async def delete_controller(self):
-        if self.controller_message:
-            try:
-                await self.controller_message.delete()
-            except:
-                pass
-            self.controller_message = None
-
-    def remove_from_queue(self, position: int) -> Optional[Song]:
-        """Remove song at position (1-based)"""
-        if position < 1 or position > len(self.queue):
-            return None
-        
-        items = list(self.queue)
-        removed = items.pop(position - 1)
-        self.queue = deque(items)
-        return removed
-
-
-class PlayerManager:
-
-    """Manages MusicPlayer instances for all guilds"""
-    def __init__(self, bot):
-        self.bot = bot
-        self.players: Dict[int, MusicPlayer] = {}
-
-        # ✅ GLOBAL executor (shared by all guilds)
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
-    
-    def get_player(self, guild: discord.Guild) -> MusicPlayer:
-        """Get or create a player for a guild"""
-        if guild.id not in self.players:
-            self.players[guild.id] = MusicPlayer(guild, self.bot)
-        return self.players[guild.id]
-    
-    async def connect_to_voice(self, channel: discord.VoiceChannel) -> MusicPlayer:
-        """Connect to a voice channel"""
-        player = self.get_player(channel.guild)
-        await player.connect(channel)
-        return player
-    
-    async def disconnect(self, guild: discord.Guild):
-        """Disconnect from a guild"""
-        try:
-            if guild.id in self.players:
-                await self.players[guild.id].disconnect()
-                del self.players[guild.id]
-                logger.info(f"Disconnected from {guild.name} (ID: {guild.id})")
-        except KeyError:
-            logger.debug(f"No active player to disconnect for guild {guild.id}")
-        except Exception as e:
-            logger.error(f"Error disconnecting from {guild.name}: {e}")
-    
-    def remove_player(self, guild_id: int):
-        """Remove player for a guild"""
-        if guild_id in self.players:
-            del self.players[guild_id]
+        """Check if voice channel is empty and disconnect if needed"""
+        if self.voice_client and self.voice_client.channel:
+            members = self.voice_client.channel.members
+            bot_member = self.bot.user
+            other_members = [m for m in members if m != bot_member]
+            
+            if not other_members:
+                logger.info(f"No members left in {self.guild.name}, disconnecting.")
+                await self.disconnect()
