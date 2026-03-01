@@ -28,45 +28,31 @@ load_dotenv()
 # Cookie file path
 COOKIE_FILE = 'cookies.txt'
 
-from cryptography.fernet import Fernet
-
 def download_youtube_cookies():
-    encrypt_key = os.getenv('COOKIE_ENCRYPT_KEY')
-    cookie_url  = os.getenv('YOUTUBE_COOKIE_URL')
+    """Download cookies.txt directly from URL (no encryption)"""
+    cookie_url = os.getenv('YOUTUBE_COOKIE_URL')
 
     if not cookie_url:
         logger.info("No cookie URL configured in .env")
         return False
 
-    if not encrypt_key:
-        logger.warning("⚠️ No encryption key found — fetching cookies without decryption")
-
     try:
-        logger.info("🔐 Fetching cookies from URL...")
+        logger.info("⬇️ Downloading YouTube cookies...")
         response = requests.get(cookie_url, timeout=30)
         response.raise_for_status()
 
-        if encrypt_key:
-            # Decrypt the fetched content
-            f = Fernet(encrypt_key.encode())
-            decrypted = f.decrypt(response.text.strip().encode('utf-8')).decode('utf-8')
-            content = decrypted
-            logger.info("✅ Cookies fetched and decrypted successfully")
-        else:
-            # Plain fetch fallback
-            content = response.text
-            logger.info("✅ Cookies fetched (unencrypted)")
+        with open(COOKIE_FILE, 'w', encoding='utf-8') as f:
+            f.write(response.text)
 
-        with open(COOKIE_FILE, 'w', encoding='utf-8') as file:
-            file.write(content)
-
+        logger.info("✅ YouTube cookies downloaded successfully")
         return True
 
     except Exception as e:
-        logger.error(f"❌ Failed to load cookies: {e}")
+        logger.error(f"❌ Failed to download cookies: {e}")
         return False
 
-# Download cookies on module load
+
+# Download on module load
 download_youtube_cookies()
 
 # ✅ IMPROVED YT-DLP options - Works with or without Node.js
