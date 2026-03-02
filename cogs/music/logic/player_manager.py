@@ -557,6 +557,34 @@ class MusicPlayer:
             return True
         return False
     
+    def set_volume(self, volume: int):
+        """
+        Set the volume for playback.
+        
+        Args:
+            volume: Volume level as percentage (0-100)
+        """
+        # Convert to float (0.0 - 1.0)
+        self.volume = max(0.0, min(1.0, volume / 100.0))
+        
+        # Update volume for currently playing source if available
+        if self.voice_client and self.voice_client.source:
+            if hasattr(self.voice_client.source, 'volume'):
+                self.voice_client.source.volume = self.volume
+    
+    def shuffle_queue(self):
+        """Shuffle the queue randomly"""
+        if len(self.queue) > 1:
+            # Convert deque to list, shuffle, then convert back
+            queue_list = list(self.queue)
+            import random
+            random.shuffle(queue_list)
+            self.queue = deque(queue_list)
+    
+    def clear_queue(self):
+        """Clear all songs from the queue"""
+        self.queue.clear()
+    
     async def skip(self):
         """Skip current song"""
         if self.voice_client and self.voice_client.is_playing():

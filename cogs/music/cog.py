@@ -638,6 +638,157 @@ class Music(commands.Cog):
         if message:
             view.message = message
     
+    # ==================== LIKED SONGS COMMANDS ====================
+    
+    @commands.hybrid_command(name='likes', description='View your liked songs playlist')
+    async def likes(self, ctx):
+        """View your liked songs"""
+        try:
+            from .logic.liked_songs import get_liked_songs_storage
+            storage = get_liked_songs_storage()
+            
+            user_id = ctx.author.id
+            liked_songs = await storage.get_liked_songs(user_id)
+            
+            if not liked_songs:
+                embed = discord.Embed(
+                    description="### ❤️ Your Liked Songs\n\n*No liked songs yet! Click the ❤️ button on a playing song to add it.*",
+                    color=0xE91E63
+                )
+                return await self._send_response(ctx, embed=embed)
+            
+            # Build the embed
+            total_duration = sum(s.get('duration', 0) for s in liked_songs)
+            mins = int(total_duration // 60)
+            
+            embed = discord.Embed(
+                description=f"### ❤️ Your Liked Songs\n`{len(liked_songs)} tracks` • `~{mins} minutes`\n\n**Click the ❤️ button on any playing song to like it!**",
+                color=0xE91E63
+            )
+            
+            # Add songs (limit to 20 for embed)
+            songs_text = ""
+            for i, song in enumerate(liked_songs[:20], 1):
+                title = song.get('title', 'Unknown')[:50]
+                duration = song.get('duration', 0)
+                mins_dur = duration // 60
+                secs_dur = duration % 60
+                songs_text += f"`{i}.` {title} • `{mins_dur}:{secs_dur:02d}`\n"
+            
+            if len(liked_songs) > 20:
+                songs_text += f"\n*+{len(liked_songs) - 20} more*"
+            
+            embed.add_field(name="📜 Liked Songs", value=songs_text or "*Empty*", inline=False)
+            
+            # Add footer with unlike instructions
+            embed.set_footer(text="Use /unlike <number> to remove a song from your liked songs")
+            
+            await self._send_response(ctx, embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error in likes command: {e}")
+            embed = MusicEmbeds.error("Failed to load liked songs. Please try again.")
+            await self._send_response(ctx, embed=embed)
+    
+    @commands.hybrid_command(name='unlike', description='Remove a song from your liked songs')
+    @app_commands.describe(position='Position number of the song to remove (from /likes list)')
+    async def unlike(self, ctx, position: int):
+        """Remove a song from liked songs by position number"""
+        try:
+            from .logic.liked_songs import get_liked_songs_storage
+            storage = get_liked_songs_storage()
+            
+            user_id = ctx.author.id
+            liked_songs = await storage.get_liked_songs(user_id)
+            
+            if not liked_songs:
+                embed = discord.Embed(
+                    description="### 💔 Your Liked Songs\n\n*No liked songs to remove!*",
+                    color=0xE91E63
+                )
+                return await self._send_response(ctx, embed=embed)
+            
+            # Validate position
+            if position < 1 or position > len(liked_songs):
+                embed = MusicEmbeds.error(f"Invalid position! Use a number between 1 and {len(liked_songs)}")
+                return await self._send_response(ctx, embed=embed)
+            
+            # Get the song to remove
+            song_to_remove = liked_songs[position - 1]
+            song_title = song_to_remove.get('title', 'Unknown')
+            song_url = song_to_remove.get('url', '')
+            
+            # Remove the song
+            removed = await storage.remove_song(user_id, song_url)
+            
+            if removed:
+                embed = discord.Embed(
+                    description=f"### 💔 Removed from Liked Songs\n\n**{song_title}**\n\nUse `/likes` to view your remaining liked songs!",
+                    color=0xE91E63
+                )
+            else:
+                embed = MusicEmbeds.error("Failed to remove song. Please try again.")
+            
+            await self._send_response(ctx, embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error in unlike command: {e}")
+            embed = MusicEmbeds.error("Failed to remove song. Please try again.")
+            await self._send_response(ctx, embed=embed)
+    
+    @commands.hybrid_command(name='playliked', description='Play your liked songs queue')
+    async def playliked(self, ctx):
+        """Add all liked songs to queue and play"""
+        try:
+            from .logic.liked_songs import get_liked_songs_storage
+            storage = get_liked_songs_storage()
+            
+            user_id = ctx.author.id
+            liked_songs = await storage.get_liked_songs(user_id)
+            
+            if not liked_songs:
+                embed = discord.Embed(
+                    description="### ❤️ Your Liked Songs\n\n*No liked songs to play!*",
+                    color=0xE91E63
+                )
+                return await self._send_response(ctx, embed=embed)
+            
+            # Connect to voice if not connected
+            player = self.player_manager.get_player(ctx.guild)
+            
+            if not player.voice_client:
+                user_voice = getattr(ctx.author, 'voice', None)
+                if not user_voice or not user_voice.channel:
+                    embed = MusicEmbeds.error("Join a voice channel first!")
+                    return await self._send_response(ctx, embed=embed)
+                
+                await player.connect(user_voice.channel)
+            
+            # Add songs to queue
+            added_count = 0
+            for song_data in liked_songs:
+                song = Song(
+                    source="pending",
+                    title=song_data.get('title', 'Unknown'),
+                    url=song_data.get('url', ''),
+                    duration=song_data.get('duration', 0),
+                    thumbnail=song_data.get('thumbnail'),
+                    requester=ctx.author
+                )
+                await player.add_to_queue(song)
+                added_count += 1
+            
+            embed = discord.Embed(
+                description=f"### ❤️ Playing Liked Songs\n\nAdded **{added_count}** songs to queue!",
+                color=0xE91E63
+            )
+            await self._send_response(ctx, embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error in playliked command: {e}")
+            embed = MusicEmbeds.error("Failed to play liked songs. Please try again.")
+            await self._send_response(ctx, embed=embed)
+    
     # ==================== PLAYLIST COMMANDS ====================
     
     @commands.hybrid_group(name='playlist', description='Manage custom playlists')

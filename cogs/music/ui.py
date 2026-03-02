@@ -274,6 +274,57 @@ class MusicControlsView(discord.ui.View):
         self.player.clear_queue()
         await interaction.response.send_message(f"🗑️ Cleared **{cleared}** tracks", ephemeral=True)
 
+    @discord.ui.button(emoji="❤️", label="Like", style=discord.ButtonStyle.secondary, custom_id="ctrl:like", row=1)
+    async def like_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.player or not self.player.current:
+            return await interaction.response.send_message("❌ Nothing playing.", ephemeral=True)
+
+        try:
+            # Import the liked songs storage
+            from cogs.music.logic.liked_songs import get_liked_songs_storage
+            storage = get_liked_songs_storage()
+            
+            user_id = interaction.user.id
+            song = self.player.current
+            
+            # Prepare song data
+            song_data = {
+                'title': song.title,
+                'url': song.url,
+                'duration': getattr(song, 'duration', 0),
+                'thumbnail': getattr(song, 'thumbnail', None),
+            }
+            
+            # Check if already liked
+            is_liked = await storage.is_liked(user_id, song.url)
+            
+            if is_liked:
+                # Unlike the song
+                removed = await storage.remove_song(user_id, song.url)
+                if removed:
+                    button.style = discord.ButtonStyle.secondary
+                    button.emoji = "❤️"
+                    await interaction.response.send_message(f"💔 Removed **{song.title[:40]}** from liked songs", ephemeral=True)
+                else:
+                    await interaction.response.send_message("❌ Could not remove song.", ephemeral=True)
+            else:
+                # Like the song
+                added = await storage.add_song(user_id, song_data)
+                if added:
+                    button.style = discord.ButtonStyle.danger
+                    button.emoji = "❤️‍🔥"
+                    await interaction.response.send_message(f"❤️ Liked **{song.title[:40]}** - Added to your liked songs!", ephemeral=True)
+                else:
+                    await interaction.response.send_message("❌ Song already in liked songs!", ephemeral=True)
+            
+            # Update the view to reflect new state
+            if interaction.message:
+                await interaction.message.edit(view=self)
+                
+        except Exception as e:
+            logger.error(f"Error in like button: {e}")
+            await interaction.response.send_message("❌ Failed to update liked songs. Please try again.", ephemeral=True)
+
     def _on_cooldown(self) -> bool:
         now = asyncio.get_event_loop().time()
         if now - self._last_action_time < self._cooldown_seconds:
