@@ -92,9 +92,9 @@ FFMPEG_OPTS = {
     'options': (
         '-vn '                          # No video
         '-bufsize 512k '                # Small buffer
-        '-ar 48000 '                    # 48kHz sample rate
+        '-ar 48000 '                   # 48kHz sample rate
         '-ac 2 '                        # Stereo
-        '-b:a 128k'                     # 128kbps bitrate
+        '-b:a 128k'                    # 128kbps bitrate
     )
 }
 

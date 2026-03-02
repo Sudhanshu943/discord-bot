@@ -762,7 +762,14 @@ class Music(commands.Cog):
                     embed = MusicEmbeds.error("Join a voice channel first!")
                     return await self._send_response(ctx, embed=embed)
                 
-                await player.connect(user_voice.channel)
+                # Connect and wait for connection to establish
+                connected = await player.connect(user_voice.channel)
+                if not connected:
+                    embed = MusicEmbeds.error("Failed to connect to voice channel!")
+                    return await self._send_response(ctx, embed=embed)
+                
+                # Wait briefly for voice connection to establish
+                await asyncio.sleep(0.5)
             
             # Add songs to queue
             added_count = 0
