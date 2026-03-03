@@ -127,6 +127,7 @@ class PlayerManager:
         self.bot = bot
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self.players = {}
+        self._connection_lock = asyncio.Lock()  # Global lock for voice connections
         
     def get_player(self, guild):
         if guild.id not in self.players:
@@ -165,6 +166,7 @@ class MusicPlayer:
         self.controller_message: discord.Message = None
         self._preload_task: Optional[asyncio.Task] = None  
         self._idle_task: Optional[asyncio.Task] = None
+        self._is_connecting: bool = False  # Track connection state to prevent reconnection loops
 
     
     @property
@@ -188,17 +190,72 @@ class MusicPlayer:
         return list(self.queue)[:limit]
     
     async def connect(self, channel: discord.VoiceChannel) -> bool:
-        """Connect to a voice channel"""
-        try:
-            if self.voice_client:
-                await self.voice_client.move_to(channel)
-            else:
-                self.voice_client = await channel.connect()
-            logger.info(f"✓ Connected to {channel.name}")
-            return True
-        except Exception as e:
-            logger.error(f"Connection error: {e}")
+        """Connect to a voice channel with retry logic for 4017 errors"""
+        # Prevent concurrent connection attempts
+        if self._is_connecting:
+            logger.warning("Connection already in progress, skipping...")
             return False
+        
+        # Check if there's a stale voice client that needs cleanup
+        if self.voice_client:
+            try:
+                # Check if it's still connected
+                if self.voice_client.channel:
+                    logger.info(f"Already connected to {self.voice_client.channel.name}, moving to {channel.name}")
+                    await self.voice_client.move_to(channel)
+                    return True
+                else:
+                    # Stale connection, clean it up
+                    logger.warning("Found stale voice client, cleaning up...")
+                    try:
+                        await self.voice_client.disconnect()
+                    except:
+                        pass
+                    self.voice_client = None
+            except Exception as e:
+                logger.warning(f"Error checking voice client: {e}")
+                self.voice_client = None
+        
+        self._is_connecting = True
+        max_retries = 3
+        retry_delay = 2.0  # seconds between retries
+        
+        try:
+            for attempt in range(max_retries):
+                try:
+                    # Use self_deaf=True and self_mute=True to avoid voice connection issues
+                    # Add a small delay before connecting to help with handshake
+                    if attempt > 0:
+                        logger.info(f"Retry {attempt + 1}/{max_retries} for voice connection...")
+                        await asyncio.sleep(retry_delay)
+                    
+                    self.voice_client = await channel.connect(self_deaf=True, self_mute=True)
+                    logger.info(f"✓ Connected to {channel.name}")
+                    return True
+                    
+                except discord.errors.ConnectionClosed as e:
+                    error_code = getattr(e, 'code', None)
+                    logger.warning(f"Voice connection attempt {attempt + 1} failed with code {error_code}: {e}")
+                    
+                    # If it's a 4017 error (encryption mode), we might need to wait longer
+                    if error_code == 4017 and attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay * 2)  # Wait longer for 4017 errors
+                        continue
+                    elif attempt < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    else:
+                        logger.error(f"Failed to connect after {max_retries} attempts: {e}")
+                        return False
+                        
+                except Exception as e:
+                    logger.error(f"Connection error: {e}")
+                    return False
+            
+            return False
+            
+        finally:
+            self._is_connecting = False
     
     async def disconnect(self):
         # Cancel preload task
@@ -209,15 +266,32 @@ class MusicPlayer:
             except:
                 pass
 
+        # Cancel idle task
+        if self._idle_task and not self._idle_task.done():
+            self._idle_task.cancel()
+            try:
+                await self._idle_task
+            except:
+                pass
 
+        # Clean up voice client properly
         if self.voice_client:
-            await self.voice_client.disconnect()
-            self.voice_client = None
+            try:
+                # Stop any playing audio first
+                if self.voice_client.is_playing():
+                    self.voice_client.stop()
+                
+                # Disconnect and clean up
+                await self.voice_client.disconnect()
+            except Exception as e:
+                logger.warning(f"Error during voice disconnect: {e}")
+            finally:
+                self.voice_client = None
 
         self.queue.clear()
         self.current = None
+        self._is_connecting = False  # Reset connection state on disconnect
         
-
         logger.info(f"Disconnected from {self.guild.name}")
 
     

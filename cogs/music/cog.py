@@ -282,8 +282,11 @@ class Music(commands.Cog):
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
         """Handle voice state changes"""
+        # Ignore bot's own state changes to prevent reconnection loops
         if member.id == self.bot.user.id:
+            # Only handle intentional disconnects, not connection failures
             if before.channel and not after.channel:
+                # This is an intentional disconnect (user kicked bot or bot left)
                 self.player_manager.remove_player(member.guild.id)
                 logger.info(f"Bot disconnected from {member.guild.name}")
             return
