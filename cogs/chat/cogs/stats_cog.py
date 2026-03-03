@@ -51,7 +51,7 @@ class StatsCog(commands.Cog):
             value=f"Requests/min: {rate_stats['requests_last_minute']}/{rate_stats['limit_per_minute']}\nTotal Blocked: {rate_stats['total_blocked']}",
             inline=True
         )
-        embed.add_field(name="Provider", value="✅ Groq (mixtral-8x7b-32768)", inline=False)
+        embed.add_field(name="Provider", value="✅ Groq (llama-3.3-70b-versatile)", inline=False)
         embed.set_footer(text="Refactored with service layer architecture")
         await ctx.send(embed=embed)
 
@@ -60,7 +60,7 @@ class StatsCog(commands.Cog):
         embed = discord.Embed(title="🤖 Available AI Providers", color=discord.Color.green())
         embed.add_field(
             name="✅ Groq",
-            value="Model: mixtral-8x7b-32768\nStatus: Active\nType: Open-source LLM",
+            value="Model: llama-3.3-70b-versatile\nStatus: Active\nType: Open-source LLM",
             inline=False
         )
         embed.set_footer(text="Groq API for fast inference")

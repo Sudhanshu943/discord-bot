@@ -454,7 +454,7 @@ class Welcomer(commands.Cog):
                 
                 client = AsyncGroq(api_key=groq_key)
                 response = await client.chat.completions.create(
-                    model="mixtral-8x7b-32768",
+                    model="llama-3.3-70b-versatile",
                     messages=messages,
                     max_tokens=500,
                     temperature=0.7

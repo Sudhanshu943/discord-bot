@@ -33,6 +33,6 @@ class ChatResponse:
     provider: ProviderType
     tokens_used: int
     response_time: float
-    model: str = "mixtral-8x7b-32768"
+    model: str = "llama-3.3-70b-versatile"
     conversation_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)

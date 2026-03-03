@@ -195,7 +195,7 @@ class ChatConfig:
             return
         
         # Get model configuration
-        default_model = self._get('groq', 'default_model', 'llama-3.1-70b-versatile')
+        default_model = self._get('groq', 'default_model', 'llama-3.3-70b-versatile')
         temperature = self._getfloat('groq', 'temperature', 0.7)
         fallback_str = self._get('groq', 'fallback_models', '')
         fallback_models = [m.strip() for m in fallback_str.split(',') if m.strip()]
