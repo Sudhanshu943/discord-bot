@@ -314,7 +314,7 @@ class Music(commands.Cog):
         if success:
             embed = MusicEmbeds.success(f"Joined **{channel.name}**")
         else:
-            embed = MusicEmbeds.error("Failed to join voice channel!")
+            embed = MusicEmbeds.error("Failed to join voice channel! Please try again in a moment.")
         await self._send_response(ctx, embed=embed)
     
     @commands.hybrid_command(name='leave', description='Leave the voice channel')
@@ -369,7 +369,10 @@ class Music(commands.Cog):
             # Connect to voice
             if not player.voice_client:
                 if ctx.author.voice:
-                    await player.connect(ctx.author.voice.channel)
+                    success = await player.connect(ctx.author.voice.channel)
+                    if not success:
+                        embed = MusicEmbeds.error("Failed to join voice! Please try again in a moment.")
+                        return await self._send_response(ctx, embed=embed)
                 else:
                     embed = MusicEmbeds.error("You're not in a voice channel!")
                     return await self._send_response(ctx, embed=embed)
@@ -768,7 +771,7 @@ class Music(commands.Cog):
                 # Connect and wait for connection to establish
                 connected = await player.connect(user_voice.channel)
                 if not connected:
-                    embed = MusicEmbeds.error("Failed to connect to voice channel!")
+                    embed = MusicEmbeds.error("Failed to connect to voice channel! Please try again in a moment.")
                     return await self._send_response(ctx, embed=embed)
                 
                 # Wait briefly for voice connection to establish
@@ -909,7 +912,10 @@ class Music(commands.Cog):
         
         if not player.voice_client:
             if ctx.author.voice:
-                await player.connect(ctx.author.voice.channel)
+                success = await player.connect(ctx.author.voice.channel)
+                if not success:
+                    embed = MusicEmbeds.error("Failed to join voice! Please try again in a moment.")
+                    return await self._send_response(ctx, embed=embed)
             else:
                 embed = MusicEmbeds.error("You're not in a voice channel!")
                 return await self._send_response(ctx, embed=embed)

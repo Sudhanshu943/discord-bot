@@ -238,7 +238,7 @@ class MusicIntegration:
                 
                 success = await player.connect(message.author.voice.channel)
                 if not success:
-                    return False, "Failed to join voice channel!"
+                    return False, "Failed to join voice channel! Please try again in a moment."
             
             # Step 3: Search using music cog's search manager
             tracks, platform, is_playlist = await music_cog.search_manager.search(
@@ -625,7 +625,7 @@ class MusicIntegration:
                 
                 success = await player.connect(message.author.voice.channel)
                 if not success:
-                    return False, "❌ Failed to join your voice channel!"
+                    return False, "❌ Failed to join your voice channel! Please try again in a moment."
             
             # Check if currently playing
             is_playing = player.is_playing
