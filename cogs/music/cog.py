@@ -8,6 +8,7 @@ Music Cog - ULTRA-FAST VERSION
 """
 
 import discord
+from discord import player
 from discord.ext import commands
 from discord import app_commands
 import logging
@@ -285,7 +286,14 @@ class Music(commands.Cog):
         # Ignore bot's own state changes to prevent reconnection loops
         if member.id == self.bot.user.id:
             # Only handle intentional disconnects, not connection failures
+            # Check if this is during an active connection attempt - don't remove player!
             if before.channel and not after.channel:
+                # IMPORTANT: Check if player EXISTS, don't use get_player (which creates new one)
+                player = self.player_manager.players.get(member.guild.id)
+                if player and player._is_connecting:
+                    # This is a connection failure, not intentional disconnect - don't remove!
+                    logger.warning(f"Voice connection failed in {member.guild.name}, not removing player")
+                    return
                 # This is an intentional disconnect (user kicked bot or bot left)
                 self.player_manager.remove_player(member.guild.id)
                 logger.info(f"Bot disconnected from {member.guild.name}")
@@ -293,9 +301,12 @@ class Music(commands.Cog):
         
         # Check if member left a voice channel
         if before.channel and not after.channel:
-            player = self.player_manager.get_player(member.guild)
-            if player.voice_client and player.voice_client.channel == before.channel:
-                await player.check_empty_channel()
+            # Use .get() to avoid creating new player
+            player = self.player_manager.players.get(member.guild.id)
+            if player and player.voice_client and player.voice_client.channel == before.channel:
+                # Don't disconnect if currently connecting or lock is held
+                if not player._is_connecting and not player._voice_lock.locked():
+                    await player.check_empty_channel()
     
     # ==================== CONNECTION COMMANDS ====================
     
@@ -366,8 +377,8 @@ class Music(commands.Cog):
             player = self.player_manager.get_player(ctx.guild)
             player.text_channel = ctx.channel
 
-            # Connect to voice
-            if not player.voice_client:
+            # Connect to voice - check if actually connected, not just if client exists
+            if not player.voice_client or not player.voice_client.is_connected():
                 if ctx.author.voice:
                     success = await player.connect(ctx.author.voice.channel)
                     if not success:
@@ -759,10 +770,10 @@ class Music(commands.Cog):
                 )
                 return await self._send_response(ctx, embed=embed)
             
-            # Connect to voice if not connected
+            # Connect to voice if not connected - check if actually connected
             player = self.player_manager.get_player(ctx.guild)
             
-            if not player.voice_client:
+            if not player.voice_client or not player.voice_client.is_connected():
                 user_voice = getattr(ctx.author, 'voice', None)
                 if not user_voice or not user_voice.channel:
                     embed = MusicEmbeds.error("Join a voice channel first!")
@@ -910,7 +921,8 @@ class Music(commands.Cog):
         player = self.player_manager.get_player(ctx.guild)
         player.text_channel = ctx.channel
         
-        if not player.voice_client:
+        # Check if actually connected, not just if client exists
+        if not player.voice_client or not player.voice_client.is_connected():
             if ctx.author.voice:
                 success = await player.connect(ctx.author.voice.channel)
                 if not success:

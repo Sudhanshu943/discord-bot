@@ -231,8 +231,8 @@ class MusicIntegration:
             player = music_cog.player_manager.get_player(message.guild)
             player.text_channel = message.channel
             
-            # Step 2: Connect to voice channel if not connected
-            if not player.voice_client:
+            # Step 2: Connect to voice channel if not actually connected
+            if not player.voice_client or not player.voice_client.is_connected():
                 if not message.author.voice:
                     return False, "You're not in a voice channel!"
                 
@@ -618,8 +618,8 @@ class MusicIntegration:
             player = music_cog.player_manager.get_player(message.guild)
             player.text_channel = message.channel
             
-            # Connect to voice if needed
-            if not player.voice_client:
+            # Connect to voice if needed - check if actually connected
+            if not player.voice_client or not player.voice_client.is_connected():
                 if not message.author.voice:
                     return False, "❌ You're not in a voice channel!"
                 

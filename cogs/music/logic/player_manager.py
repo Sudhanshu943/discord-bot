@@ -165,9 +165,11 @@ class MusicPlayer:
         self.controller_message: discord.Message = None
         self._preload_task: Optional[asyncio.Task] = None  
         self._idle_task: Optional[asyncio.Task] = None
-        self._connect_lock = asyncio.Lock()  # Track connection state to prevent reconnection loops
+        self._voice_lock = asyncio.Lock()  # Per-guild lock for voice operations
+        self._is_connecting: bool = False  # Track connection state to prevent reconnect loops
         self._connection_failures: int = 0  # Track connection failures
         self._last_failure_time: float = 0  # Track last failure time
+        self._reconnect_delay: float = 1.0  # Initial reconnect delay
 
     
     @property
@@ -191,15 +193,19 @@ class MusicPlayer:
         return list(self.queue)[:limit]
     
     async def connect(self, channel: discord.VoiceChannel) -> bool:
-        async with self._connect_lock:
-        
+        async with self._voice_lock:
+            # Prevent concurrent connection attempts
+            if self._is_connecting:
+                logger.warning(f"Already connecting to {channel.name}, skipping...")
+                return False
+            
             # If already connected properly
             if self.voice_client and self.voice_client.is_connected():
                 if self.voice_client.channel.id == channel.id:
                     return True
                 await self.voice_client.move_to(channel)
                 return True
-    
+
             # Cleanup stale client
             if self.voice_client:
                 try:
@@ -207,9 +213,13 @@ class MusicPlayer:
                 except:
                     pass
                 self.voice_client = None
-                await asyncio.sleep(1)
-    
+                await asyncio.sleep(0.5)
+
+            self._is_connecting = True
+            self._connection_failures = 0
+            
             try:
+                # Use reconnect=True to handle network issues
                 self.voice_client = await channel.connect(
                     self_deaf=True,
                     self_mute=False,
@@ -217,13 +227,21 @@ class MusicPlayer:
                 )
                 logger.info(f"Connected to {channel.name}")
                 return True
-    
+
             except Exception as e:
                 logger.error(f"Voice connect failed: {e}")
                 self.voice_client = None
                 return False
+            finally:
+                self._is_connecting = False
     
     async def disconnect(self):
+        """External disconnect - acquires lock first"""
+        async with self._voice_lock:
+            await self._do_disconnect()
+    
+    async def _do_disconnect(self):
+        """Internal disconnect - called when lock is already held"""
         # Cancel preload task
         if self._preload_task and not self._preload_task.done():
             self._preload_task.cancel()
@@ -246,7 +264,7 @@ class MusicPlayer:
                 # Stop any playing audio first
                 if self.voice_client.is_playing():
                     self.voice_client.stop()
-                
+
                 # Disconnect and clean up
                 await self.voice_client.disconnect()
             except Exception as e:
@@ -258,7 +276,7 @@ class MusicPlayer:
         self.current = None
         self._is_connecting = False  # Reset connection state on disconnect
         self._connection_failures = 0  # Reset failure counter on disconnect
-        
+
         logger.info(f"Disconnected from {self.guild.name}")
 
     
@@ -405,11 +423,13 @@ class MusicPlayer:
     async def _idle_disconnect(self):
         try:
             await asyncio.sleep(60)
-
-            # If still idle after 60 seconds
-            if not self.is_playing and not self.queue:
-                logger.info(f"Idle timeout reached in {self.guild.name}, disconnecting.")
-                await self.disconnect()
+            
+            async with self._voice_lock:
+                # Double-check: only disconnect if still idle AND connected
+                if not self.is_playing and not self.queue:
+                    if self.voice_client and self.voice_client.is_connected():
+                        logger.info(f"Idle timeout reached in {self.guild.name}, disconnecting.")
+                        await self._do_disconnect()
 
         except asyncio.CancelledError:
             pass
@@ -423,6 +443,11 @@ class MusicPlayer:
 
         if not self.voice_client:
             logger.error("No voice client")
+            return
+        
+        # STRICT: Verify voice is actually connected before playing
+        if not self.voice_client.is_connected():
+            logger.error("Voice client exists but not connected, cannot play")
             return
         
         # Cancel idle timer if playing again
@@ -627,39 +652,41 @@ class MusicPlayer:
         self.queue.clear()
     
     async def skip(self):
-        """Skip current song"""
-        if self.voice_client and self.voice_client.is_playing():
-            self.voice_client.stop()
-            return True
-        return False
+        async with self._voice_lock:
+            """Skip current song"""
+            if self.voice_client and self.voice_client.is_playing():
+                self.voice_client.stop()
+                return True
+            return False
     
     async def stop(self):
-        """Stop playback and clear queue"""
-        if self.voice_client:
-            self.voice_client.stop()
-            
-            # Cancel preload task
-            if self._preload_task and not self._preload_task.done():
-                self._preload_task.cancel()
-                try:
-                    await self._preload_task
-                except:
-                    pass
-            
-            # Cancel idle task
-            if self._idle_task and not self._idle_task.done():
-                self._idle_task.cancel()
-                try:
-                    await self._idle_task
-                except:
-                    pass
-            
-            self.queue.clear()
-            self.current = None
-            
-            await self.disconnect()
-            return True
-        return False
+        async with self._voice_lock:
+            """Stop playback and clear queue"""
+            if self.voice_client:
+                self.voice_client.stop()
+
+                # Cancel preload task
+                if self._preload_task and not self._preload_task.done():
+                    self._preload_task.cancel()
+                    try:
+                        await self._preload_task
+                    except:
+                        pass
+                    
+                # Cancel idle task
+                if self._idle_task and not self._idle_task.done():
+                    self._idle_task.cancel()
+                    try:
+                        await self._idle_task
+                    except:
+                        pass
+                    
+                self.queue.clear()
+                self.current = None
+
+                await self.disconnect()
+                return True
+            return False
     
     async def add_to_queue(self, song: Song):
         """Add song to queue and auto-play if idle"""
@@ -673,12 +700,14 @@ class MusicPlayer:
             return len(self.queue)
     
     async def check_empty_channel(self):
-        """Check if voice channel is empty and disconnect if needed"""
-        if self.voice_client and self.voice_client.channel:
-            members = self.voice_client.channel.members
-            bot_member = self.bot.user
-            other_members = [m for m in members if m != bot_member]
-            
-            if not other_members:
-                logger.info(f"No members left in {self.guild.name}, disconnecting.")
-                await self.disconnect()
+        async with self._voice_lock:
+            # Check if voice channel is empty and disconnect if needed
+            if self.voice_client and self.voice_client.channel:
+                members = self.voice_client.channel.members
+                bot_member = self.bot.user
+                other_members = [m for m in members if m != bot_member]
+                
+                if not other_members:
+                    logger.info(f"No members left in {self.guild.name}, disconnecting.")
+                    # Use _do_disconnect to avoid deadlock (lock already held)
+                    await self._do_disconnect()
