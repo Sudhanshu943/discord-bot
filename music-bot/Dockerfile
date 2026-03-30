@@ -13,4 +13,3 @@ RUN pip install --no-cache-dir -U yt-dlp
 COPY . .
 
 CMD ["python", "music.py"]
-```
