@@ -16,10 +16,5 @@ RUN pip install --no-cache-dir -U yt-dlp
 COPY . .
 
 CMD ["python", "music.py"]
-```
 
-This installs Node.js v20 (LTS) instead of the old Debian default which is usually v12 or older.
-
-After rebuilding check the Railway build logs — you should see:
-```
 ## Installing Node.js v20
