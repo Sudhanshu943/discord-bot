@@ -13,6 +13,7 @@ import re
 import asyncio
 import concurrent.futures
 import os
+import random
 from typing import Optional, List, Tuple
 from enum import Enum
 
@@ -35,7 +36,7 @@ class Platform(Enum):
     TWITTER = "twitter"
     UNKNOWN = "unknown"
 
-# ✅ OPTIMIZED YT-DLP options for SPEED
+# ✅ OPTIMIZED YT-DLP options for SPEED with anti-detection
 YDL_SEARCH_OPTS = {
     'format': 'bestaudio[acodec=opus]/bestaudio/best',  # Prefer Opus codec
     'quiet': True,
@@ -50,12 +51,34 @@ YDL_SEARCH_OPTS = {
     'retries': 3,                   # Fewer retries
     'fragment_retries': 3,
     'skip_unavailable_fragments': True,
+    # Anti-detection measures
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'referer': 'https://www.youtube.com/',
+    'sleep_interval': 1,
+    'max_sleep_interval': 5,
+    'sleep_interval_requests': 1,
+    'ratelimit': 1000000,
+    'throttledratelimit': 100000,
+    'geo_bypass_country': 'US',
 }
 
 # Add cookies to YDL_SEARCH_OPTS if file exists
 COOKIE_FILE = 'cookies.txt'
 if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
     YDL_SEARCH_OPTS['cookiefile'] = COOKIE_FILE
+
+# User agents for rotation
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+]
+
+def get_random_user_agent() -> str:
+    """Get a random user agent from the list"""
+    return random.choice(USER_AGENTS)
 
 class SearchManager:
     """
@@ -337,133 +360,181 @@ class SearchManager:
     async def _extract_youtube_mix(
         self,
         url: str,
-        limit: int = 25
+        limit: int = 25,
+        max_retries: int = 3
     ) -> Tuple[List[dict], Platform, bool]:
-        """Extract YouTube Mix/Radio (dynamic playlists)"""
+        """Extract YouTube Mix/Radio (dynamic playlists) with retry logic"""
         loop = asyncio.get_event_loop()
         
-        def _extract():
-            opts = YDL_SEARCH_OPTS.copy()
-            opts['playlistend'] = limit
-            opts['extract_flat'] = 'in_playlist'  # SUPER FAST
-            opts['ignoreerrors'] = True
-            opts['yes_playlist'] = True
-            
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.extract_info(url, download=False)
-        
-        try:
-            logger.info(f"⚡ Extracting YouTube Mix (max {limit} tracks)...")
-            info = await loop.run_in_executor(self.executor, _extract)
-            
-            if not info:
-                return [], Platform.YOUTUBE, False
-            
-            tracks = []
-            
-            if 'entries' in info:
-                entries = [e for e in info['entries'] if e]
-                logger.info(f"📻 YouTube Mix: {len(entries)} tracks available")
+        for attempt in range(max_retries):
+            try:
+                def _extract():
+                    opts = YDL_SEARCH_OPTS.copy()
+                    opts['playlistend'] = limit
+                    opts['extract_flat'] = 'in_playlist'  # SUPER FAST
+                    opts['ignoreerrors'] = True
+                    opts['yes_playlist'] = True
+                    
+                    # Rotate user agent on retries
+                    if attempt > 0:
+                        opts['user_agent'] = get_random_user_agent()
+                    
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        return ydl.extract_info(url, download=False)
                 
-                for entry in entries[:limit]:
-                    video_id = entry.get('id') or entry.get('video_id')
-                    if not video_id:
+                logger.info(f"⚡ Extracting YouTube Mix (max {limit} tracks)...")
+                info = await loop.run_in_executor(self.executor, _extract)
+                
+                if not info:
+                    return [], Platform.YOUTUBE, False
+                
+                tracks = []
+                
+                if 'entries' in info:
+                    entries = [e for e in info['entries'] if e]
+                    logger.info(f"📻 YouTube Mix: {len(entries)} tracks available")
+                    
+                    for entry in entries[:limit]:
+                        video_id = entry.get('id') or entry.get('video_id')
+                        if not video_id:
+                            continue
+                        
+                        video_url = f"https://www.youtube.com/watch?v={video_id}"
+                        
+                        track_info = {
+                            'title': entry.get('title', 'Unknown'),
+                            'url': entry.get('url') or video_url,
+                            'audio_url': None,
+                            'duration': entry.get('duration', 0),
+                            'thumbnail': entry.get('thumbnail', ''),
+                            'uploader': entry.get('uploader', 'Unknown'),
+                            'id': video_id,
+                            'needs_extraction': True,
+                        }
+                        tracks.append(track_info)
+                else:
+                    track_info = self._extract_metadata_only(info)
+                    if track_info:
+                        tracks.append(track_info)
+                
+                logger.info(f"✓ Mix: {len(tracks)} tracks loaded")
+                return tracks, Platform.YOUTUBE, True
+                
+            except Exception as e:
+                error_msg = str(e)
+                
+                # Check if it's a bot detection error
+                if 'Sign in to confirm' in error_msg or '429' in error_msg:
+                    logger.warning(f"Bot detection triggered (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                    
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2, 4, 8 seconds
+                        wait_time = 2 ** (attempt + 1)
+                        logger.info(f"⏳ Waiting {wait_time}s before retry...")
+                        await asyncio.sleep(wait_time)
                         continue
-                    
-                    video_url = f"https://www.youtube.com/watch?v={video_id}"
-                    
-                    track_info = {
-                        'title': entry.get('title', 'Unknown'),
-                        'url': entry.get('url') or video_url,
-                        'audio_url': None,
-                        'duration': entry.get('duration', 0),
-                        'thumbnail': entry.get('thumbnail', ''),
-                        'uploader': entry.get('uploader', 'Unknown'),
-                        'id': video_id,
-                        'needs_extraction': True,
-                    }
-                    tracks.append(track_info)
-            else:
-                track_info = self._extract_metadata_only(info)
-                if track_info:
-                    tracks.append(track_info)
-            
-            logger.info(f"✓ Mix: {len(tracks)} tracks loaded")
-            return tracks, Platform.YOUTUBE, True
-            
-        except Exception as e:
-            logger.error(f"Mix extraction error: {e}")
-            return [], Platform.YOUTUBE, False
+                    else:
+                        logger.error(f"❌ Max retries reached for mix extraction")
+                        return [], Platform.YOUTUBE, False
+                else:
+                    logger.error(f"Mix extraction error: {e}")
+                    return [], Platform.YOUTUBE, False
+        
+        return [], Platform.YOUTUBE, False
     
     async def _extract_via_ytdlp(
         self,
         url: str,
         limit: int,
         platform: Platform,
-        is_playlist: bool
+        is_playlist: bool,
+        max_retries: int = 3
     ) -> Tuple[List[dict], Platform, bool]:
-        """Extract tracks via yt-dlp with STREAMING mode"""
+        """Extract tracks via yt-dlp with STREAMING mode and retry logic"""
         loop = asyncio.get_event_loop()
         
-        def _extract():
-            opts = YDL_SEARCH_OPTS.copy()
-            opts['playlistend'] = limit
-            opts['extract_flat'] = 'in_playlist' if is_playlist else False  # ⚡ FAST for playlists
-            opts['ignoreerrors'] = True
-            
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.extract_info(url, download=False)
-        
-        try:
-            logger.info(f"⚡ Extracting from {self.get_platform_name(platform)}...")
-            info = await loop.run_in_executor(self.executor, _extract)
-            
-            if not info:
-                return [], platform, False
-            
-            tracks = []
-            
-            if 'entries' in info:
-                entries = [e for e in info['entries'] if e]
-                total = len(entries)
+        for attempt in range(max_retries):
+            try:
+                def _extract():
+                    opts = YDL_SEARCH_OPTS.copy()
+                    opts['playlistend'] = limit
+                    opts['extract_flat'] = 'in_playlist' if is_playlist else False  # ⚡ FAST for playlists
+                    opts['ignoreerrors'] = True
+                    
+                    # Rotate user agent on retries
+                    if attempt > 0:
+                        opts['user_agent'] = get_random_user_agent()
+                    
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        return ydl.extract_info(url, download=False)
                 
-                if is_playlist:
-                    logger.info(f"📋 Playlist: {info.get('title', 'Unknown')} ({total} tracks)")
+                logger.info(f"⚡ Extracting from {self.get_platform_name(platform)}...")
+                info = await loop.run_in_executor(self.executor, _extract)
                 
-                for idx, entry in enumerate(entries[:limit], 1):
-                    # Build minimal track info
-                    video_id = entry.get('id') or entry.get('video_id')
-                    if not video_id:
+                if not info:
+                    return [], platform, False
+                
+                tracks = []
+                
+                if 'entries' in info:
+                    entries = [e for e in info['entries'] if e]
+                    total = len(entries)
+                    
+                    if is_playlist:
+                        logger.info(f"📋 Playlist: {info.get('title', 'Unknown')} ({total} tracks)")
+                    
+                    for idx, entry in enumerate(entries[:limit], 1):
+                        # Build minimal track info
+                        video_id = entry.get('id') or entry.get('video_id')
+                        if not video_id:
+                            continue
+                        
+                        # Use YouTube Music URL if applicable, otherwise regular YouTube
+                        if platform == Platform.YOUTUBE_MUSIC:
+                            video_url = f"https://music.youtube.com/watch?v={video_id}"
+                        else:
+                            video_url = entry.get('url') or f"https://www.youtube.com/watch?v={video_id}"
+                        
+                        track_info = {
+                            'title': entry.get('title', 'Unknown'),
+                            'url': video_url,
+                            'audio_url': None,
+                            'duration': entry.get('duration', 0),
+                            'thumbnail': entry.get('thumbnail', ''),
+                            'uploader': entry.get('uploader', 'Unknown'),
+                            'id': video_id,
+                            'needs_extraction': True,
+                        }
+                        tracks.append(track_info)
+                else:
+                    track_info = self._extract_metadata_only(info)
+                    if track_info:
+                        tracks.append(track_info)
+                
+                logger.info(f"✓ {len(tracks)} tracks from {self.get_platform_name(platform)} (⚡ FAST)")
+                return tracks, platform, is_playlist
+                
+            except Exception as e:
+                error_msg = str(e)
+                
+                # Check if it's a bot detection error
+                if 'Sign in to confirm' in error_msg or '429' in error_msg:
+                    logger.warning(f"Bot detection triggered (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                    
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2, 4, 8 seconds
+                        wait_time = 2 ** (attempt + 1)
+                        logger.info(f"⏳ Waiting {wait_time}s before retry...")
+                        await asyncio.sleep(wait_time)
                         continue
-                    
-                    # Use YouTube Music URL if applicable, otherwise regular YouTube
-                    if platform == Platform.YOUTUBE_MUSIC:
-                        video_url = f"https://music.youtube.com/watch?v={video_id}"
                     else:
-                        video_url = entry.get('url') or f"https://www.youtube.com/watch?v={video_id}"
-                    
-                    track_info = {
-                        'title': entry.get('title', 'Unknown'),
-                        'url': video_url,
-                        'audio_url': None,
-                        'duration': entry.get('duration', 0),
-                        'thumbnail': entry.get('thumbnail', ''),
-                        'uploader': entry.get('uploader', 'Unknown'),
-                        'id': video_id,
-                        'needs_extraction': True,
-                    }
-                    tracks.append(track_info)
-            else:
-                track_info = self._extract_metadata_only(info)
-                if track_info:
-                    tracks.append(track_info)
-            
-            logger.info(f"✓ {len(tracks)} tracks from {self.get_platform_name(platform)} (⚡ FAST)")
-            return tracks, platform, is_playlist
-            
-        except Exception as e:
-            logger.error(f"Extraction error: {e}")
-            return [], platform, is_playlist
+                        logger.error(f"❌ Max retries reached for extraction")
+                        return [], platform, is_playlist
+                else:
+                    logger.error(f"Extraction error: {e}")
+                    return [], platform, is_playlist
+        
+        return [], platform, is_playlist
     
     def _extract_metadata_only(self, info: dict) -> Optional[dict]:
         """Extract metadata without audio URL (INSTANT)"""

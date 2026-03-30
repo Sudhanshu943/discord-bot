@@ -15,6 +15,9 @@ A dedicated Discord bot for music playback using yt-dlp. No Lavalink required!
 - ✅ **Volume control** with persistent settings
 - ✅ **Loop mode** for continuous playback
 - ✅ **Liked songs** storage per user
+- ✅ **Anti-detection measures** to bypass YouTube bot detection
+- ✅ **Automatic retry logic** with exponential backoff
+- ✅ **User-agent rotation** for better compatibility
 
 ## Commands
 
@@ -132,8 +135,22 @@ Make sure FFmpeg is installed and in your system PATH:
 
 If YouTube extraction fails:
 1. Update yt-dlp: `pip install --upgrade yt-dlp`
-2. Configure YouTube cookies (see above)
+2. Configure YouTube cookies (see [COOKIE_SETUP.md](COOKIE_SETUP.md))
 3. Check if the video is available in your region
+
+### Bot Detection Issues
+
+If you see "Sign in to confirm you're not a bot" or HTTP 429 errors:
+1. **Set up YouTube cookies** - See [COOKIE_SETUP.md](COOKIE_SETUP.md) for detailed instructions
+2. **Use a dedicated account** - Create a separate YouTube account for the bot
+3. **Update cookies regularly** - Cookies expire after a few hours/days
+4. **Check logs** - Review `music-bot.log` for detailed error messages
+
+The bot includes built-in anti-detection measures:
+- Automatic retry with exponential backoff (2s, 4s, 8s delays)
+- User-agent rotation across multiple browsers
+- Rate limiting to avoid triggering YouTube's limits
+- Cookie auto-refresh every hour
 
 ## License
 

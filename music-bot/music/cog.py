@@ -16,9 +16,6 @@ from typing import Optional, List
 import json
 import os
 
-
-import bot
-
 from .logic.player_manager import PlayerManager, Song
 from .logic.search_manager import SearchManager, Platform
 from .ui import MusicEmbeds, MusicControlsView, VolumeModal
@@ -1123,8 +1120,6 @@ class Music(commands.Cog):
         
         embed.set_footer(text=f"Use /playlist load {name} to play")
         await self._send_response(ctx, embed=embed)
-
-bot.player_manager = PlayerManager(bot)
 
 async def setup(bot):
     """Setup function to load the music cog"""

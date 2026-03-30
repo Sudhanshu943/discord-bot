@@ -28,6 +28,20 @@ load_dotenv()
 # Cookie file path
 COOKIE_FILE = 'cookies.txt'
 
+# User agents for rotation
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+]
+
+def get_random_user_agent() -> str:
+    """Get a random user agent from the list"""
+    import random
+    return random.choice(USER_AGENTS)
+
 def download_youtube_cookies():
     """Download cookies.txt directly from URL (no encryption)"""
     cookie_url = os.getenv('YOUTUBE_COOKIE_URL')
@@ -51,20 +65,50 @@ def download_youtube_cookies():
         logger.error(f"❌ Failed to download cookies: {e}")
         return False
 
+def refresh_cookies_if_needed():
+    """Refresh cookies if they're older than 1 hour"""
+    import time
+    
+    if not os.path.exists(COOKIE_FILE):
+        return download_youtube_cookies()
+    
+    # Check file age
+    file_age = time.time() - os.path.getmtime(COOKIE_FILE)
+    if file_age > 3600:  # 1 hour
+        logger.info("🔄 Cookies are old, refreshing...")
+        return download_youtube_cookies()
+    
+    return True
+
 async def init_cookies(self):
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, download_youtube_cookies)
 
 # ✅ IMPROVED YT-DLP options - Works with or without Node.js
+# Enhanced with anti-detection measures
 YDL_OPTS = {
     'format': 'bestaudio/best',
     'quiet': True,
     'skip_download': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
-    'extractor_retries': 5,
-    'fragment_retries': 5,
+    'extractor_retries': 3,
+    'fragment_retries': 3,
     'ignoreerrors': False,
+    # Anti-detection measures
+    'no_check_certificate': True,
+    'prefer_insecure': True,
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'referer': 'https://www.youtube.com/',
+    'sleep_interval': 1,
+    'max_sleep_interval': 5,
+    'sleep_interval_requests': 1,
+    # Rate limiting to avoid detection
+    'ratelimit': 1000000,  # 1MB/s
+    'throttledratelimit': 100000,
+    # Additional options
+    'geo_bypass': True,
+    'geo_bypass_country': 'US',
 }
 
 # Add cookies to YDL_OPTS if file exists
@@ -73,10 +117,14 @@ if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
     logger.info("✅ YouTube cookies enabled")
 
 # Extractor's specific args for YouTube
+# Enhanced with multiple player clients for better compatibility
 YDL_EXTRACTOR_ARGS = {
     'youtube': {
-        'player_client': ['default'],  # Try simpler clients first
-        'player_skip': ['configs', 'js', 'hls'],
+        'player_client': ['android', 'ios', 'web', 'default'],  # Try multiple clients
+        'player_skip': ['configs', 'js'],
+        'skip': ['hls'],
+        'comment_sort': 'top',
+        'max_comments': [0],  # Disable comment extraction
     }
 }
 
@@ -315,34 +363,64 @@ class MusicPlayer:
             # Regular YouTube URL - just try once
             return await self._try_extract(loop, url, fast)
     
-    async def _try_extract(self, loop, url: str, fast: bool = False) -> Optional[str]:
-        """Helper method to extract audio URL with error handling"""
-        def _extract():
-            opts = YDL_OPTS.copy()
-            opts['extractor_args'] = YDL_EXTRACTOR_ARGS
-            if fast:
-                opts['format'] = 'bestaudio/best'  # Faster format for quick search
-            
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.extract_info(url, download=False)
+    async def _try_extract(self, loop, url: str, fast: bool = False, max_retries: int = 3) -> Optional[str]:
+        """Helper method to extract audio URL with error handling and retry logic"""
         
-        try:
-            info = await loop.run_in_executor(self.executor, _extract)
-            
-            if not info:
+        for attempt in range(max_retries):
+            try:
+                # Refresh cookies if needed
+                if attempt > 0:
+                    await loop.run_in_executor(None, refresh_cookies_if_needed)
+                
+                def _extract():
+                    opts = YDL_OPTS.copy()
+                    opts['extractor_args'] = YDL_EXTRACTOR_ARGS
+                    if fast:
+                        opts['format'] = 'bestaudio/best'  # Faster format for quick search
+                    
+                    # Rotate user agent on retries
+                    if attempt > 0:
+                        opts['user_agent'] = get_random_user_agent()
+                    
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        return ydl.extract_info(url, download=False)
+                
+                info = await loop.run_in_executor(self.executor, _extract)
+                
+                if not info:
+                    return None
+                
+                return self._get_audio_url(info)
+                
+            except yt_dlp.utils.DownloadError as e:
+                error_msg = str(e)
+                
+                # Check if it's a bot detection error
+                if 'Sign in to confirm' in error_msg or '429' in error_msg:
+                    logger.warning(f"Bot detection triggered (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                    
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2, 4, 8 seconds
+                        wait_time = 2 ** (attempt + 1)
+                        logger.info(f"⏳ Waiting {wait_time}s before retry...")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"❌ Max retries reached for {url}")
+                        return None
+                else:
+                    logger.warning(f"Download error for {url}: {e}")
+                    return None
+                    
+            except yt_dlp.utils.ExtractorError as e:
+                logger.warning(f"Extractor error for {url}: {e}")
                 return None
-            
-            return self._get_audio_url(info)
-            
-        except yt_dlp.utils.DownloadError as e:
-            logger.warning(f"Download error for {url}: {e}")
-            return None
-        except yt_dlp.utils.ExtractorError as e:
-            logger.warning(f"Extractor error for {url}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Extraction error for {url}: {e}")
-            return None
+                
+            except Exception as e:
+                logger.error(f"Extraction error for {url}: {e}")
+                return None
+        
+        return None
     
     def _get_audio_url(self, info: dict) -> Optional[str]:
         """Extract best audio URL from yt-dlp info"""
