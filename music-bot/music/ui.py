@@ -105,7 +105,7 @@ class MusicEmbeds:
     def error(message: str) -> discord.Embed:
         """Clean error message"""
         embed = discord.Embed(
-            description=f"### ❌ Error\n{message}",
+            description=f"### ❌Error\n{message}",
             color=MusicEmbeds.COLOR_ERROR
         )
         return embed
