@@ -21,7 +21,7 @@ from ..core import ChatException, RateLimitException
 from ..models import ChannelMemory, GuildMemory
 from ..services import ChatService, MemoryManager, ProviderRouter, SafetyFilter
 from ..storage import MemoryStorage
-from ..integrations import MusicIntegration
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +39,6 @@ class ChatCog(commands.Cog):
 
         self.personality_manager = get_personality_manager(bot=self.bot)
         self.config.personality = self.personality_manager
-        self.music_integration = MusicIntegration(bot=self.bot)
-
         self.storage = MemoryStorage("data/chat_memory")
         self.safety_filter = SafetyFilter(max_message_length=2000)
         self.memory_manager = MemoryManager(self.storage)

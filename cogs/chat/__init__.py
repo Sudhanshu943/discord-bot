@@ -11,7 +11,7 @@ from discord.ext import commands
 
 import logging
 
-from .cogs import ChatCog, MusicCog, StatsCog, AdminCog
+from .cogs import ChatCog, StatsCog, AdminCog
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +35,6 @@ async def setup(bot: commands.Bot) -> None:
     chat_cog = ChatCog(bot)
     await bot.add_cog(chat_cog)
     logger.info("✅ ChatCog loaded")
-
-    # Initialize MusicCog
-    music_cog = MusicCog(bot, chat_cog.music_integration)
-    await bot.add_cog(music_cog)
-    logger.info("✅ MusicCog loaded")
 
     # Initialize StatsCog
     stats_cog = StatsCog(

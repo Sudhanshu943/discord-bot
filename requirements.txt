@@ -1,9 +1,5 @@
 discord.py>=2.3.0
 python-dotenv
-yt-dlp
-PyNaCl
-ffmpeg-python
-ytmusicapi
 aiohttp
 groq>=0.4.0
 requests

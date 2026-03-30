@@ -28,7 +28,6 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
-intents.voice_states = True  # Required for voice connections
 intents.guild_messages = True
 intents.members = True  # Fixed: was guild_members
 
