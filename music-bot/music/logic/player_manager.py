@@ -87,7 +87,8 @@ async def init_cookies(self):
 # ✅ IMPROVED YT-DLP options - Works with or without Node.js
 # Enhanced with anti-detection measures
 YDL_OPTS = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio/best/bestvideo',
+    'format_sort': ['acodec:opus', 'acodec:m4a', 'acodec:mp3', 'acodec'],
     'quiet': True,
     'skip_download': True,
     'default_search': 'ytsearch',
@@ -123,8 +124,8 @@ def get_ydl_opts():
 # Enhanced with multiple player clients for better compatibility
 YDL_EXTRACTOR_ARGS = {
     'youtube': {
-        'player_client': ['web'],  # Try multiple clients
-        'player_skip': ['configs', 'js'],
+        'player_client': ['ios', 'android', 'web'],
+        'max_comments': [0],
         'skip': ['hls'],
         'comment_sort': 'top',
         'max_comments': [0],  # Disable comment extraction
@@ -389,11 +390,21 @@ class MusicPlayer:
                         return ydl.extract_info(url, download=False)
                 
                 info = await loop.run_in_executor(self.executor, _extract)
-                
+
                 if not info:
                     return None
                 
+                # Add this check here
+                if info.get('formats'):
+                    audio_formats = [f for f in info['formats'] 
+                                    if f.get('acodec') != 'none']
+                    if not audio_formats:
+                        logger.warning(f"No audio formats available for {url}")
+                        return None
+                
                 return self._get_audio_url(info)
+            
+            
                 
             except yt_dlp.utils.DownloadError as e:
                 error_msg = str(e)
@@ -613,10 +624,10 @@ class MusicPlayer:
             # Cancel previous preload task if running
             if self._preload_task and not self._preload_task.done():
                 self._preload_task.cancel()
-            try:
-                await self._preload_task
-            except:
-                pass
+                try:
+                    await self._preload_task
+                except:
+                    pass
 
             # Start new preload task
             if not self.queue_empty:
