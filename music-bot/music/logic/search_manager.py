@@ -64,8 +64,11 @@ YDL_SEARCH_OPTS = {
 
 # Add cookies to YDL_SEARCH_OPTS if file exists
 COOKIE_FILE = 'cookies.txt'
-if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
-    YDL_SEARCH_OPTS['cookiefile'] = COOKIE_FILE
+def get_ydl_opts():
+    opts = YDL_SEARCH_OPTS.copy()
+    if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
+        opts['cookiefile'] = COOKIE_FILE
+    return opts
 
 # User agents for rotation
 USER_AGENTS = [

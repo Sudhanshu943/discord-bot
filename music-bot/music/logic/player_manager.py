@@ -112,9 +112,12 @@ YDL_OPTS = {
 }
 
 # Add cookies to YDL_OPTS if file exists
-if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
-    YDL_OPTS['cookiefile'] = COOKIE_FILE
-    logger.info("✅ YouTube cookies enabled")
+def get_ydl_opts():
+    opts = YDL_OPTS.copy()
+    if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
+        opts['cookiefile'] = COOKIE_FILE
+        logger.info("✅ YouTube cookies enabled")
+    return opts
 
 # Extractor's specific args for YouTube
 # Enhanced with multiple player clients for better compatibility
