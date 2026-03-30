@@ -60,6 +60,7 @@ YDL_SEARCH_OPTS = {
     'ratelimit': 1000000,
     'throttledratelimit': 100000,
     'geo_bypass_country': 'US',
+    'proxy': os.getenv('PROXY_URL', ''),
 }
 
 # Add cookies to YDL_SEARCH_OPTS if file exists
@@ -68,6 +69,12 @@ def get_ydl_opts():
     opts = YDL_SEARCH_OPTS.copy()
     if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
         opts['cookiefile'] = COOKIE_FILE
+    opts['extractor_args'] = {
+        'youtube': {
+            'player_client': ['web'],
+            'max_comments': [0],
+        }
+    }
     return opts
 
 # User agents for rotation
