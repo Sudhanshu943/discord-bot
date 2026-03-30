@@ -376,7 +376,7 @@ class MusicPlayer:
                     await loop.run_in_executor(None, refresh_cookies_if_needed)
                 
                 def _extract():
-                    opts = YDL_OPTS.copy()
+                    opts = get_ydl_opts()
                     opts['extractor_args'] = YDL_EXTRACTOR_ARGS
                     if fast:
                         opts['format'] = 'bestaudio/best'  # Faster format for quick search

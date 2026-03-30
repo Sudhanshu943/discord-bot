@@ -248,7 +248,7 @@ class SearchManager:
         loop = asyncio.get_event_loop()
         
         def _search():
-            opts = YDL_SEARCH_OPTS.copy()
+            opts = get_ydl_opts()
             opts['playlistend'] = limit
             search_query = f"ytsearch{limit}:{query}"
             
@@ -372,7 +372,7 @@ class SearchManager:
         for attempt in range(max_retries):
             try:
                 def _extract():
-                    opts = YDL_SEARCH_OPTS.copy()
+                    opts = get_ydl_opts()
                     opts['playlistend'] = limit
                     opts['extract_flat'] = 'in_playlist'  # SUPER FAST
                     opts['ignoreerrors'] = True
@@ -459,7 +459,7 @@ class SearchManager:
         for attempt in range(max_retries):
             try:
                 def _extract():
-                    opts = YDL_SEARCH_OPTS.copy()
+                    opts = get_ydl_opts()
                     opts['playlistend'] = limit
                     opts['extract_flat'] = 'in_playlist' if is_playlist else False  # ⚡ FAST for playlists
                     opts['ignoreerrors'] = True
