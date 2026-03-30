@@ -123,7 +123,7 @@ def get_ydl_opts():
 # Enhanced with multiple player clients for better compatibility
 YDL_EXTRACTOR_ARGS = {
     'youtube': {
-        'player_client': ['android', 'ios', 'web', 'default'],  # Try multiple clients
+        'player_client': ['web'],  # Try multiple clients
         'player_skip': ['configs', 'js'],
         'skip': ['hls'],
         'comment_sort': 'top',
