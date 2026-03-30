@@ -91,6 +91,7 @@ YDL_OPTS = {
     'format_sort': ['acodec:opus', 'acodec:m4a', 'acodec:mp3', 'acodec'],
     'quiet': True,
     'skip_download': True,
+    'proxy': os.getenv('PROXY_URL', ''),
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
     'extractor_retries': 3,
@@ -110,6 +111,7 @@ YDL_OPTS = {
     # Additional options
     'geo_bypass': True,
     'geo_bypass_country': 'US',
+    
 }
 
 # Add cookies to YDL_OPTS if file exists
@@ -124,7 +126,7 @@ def get_ydl_opts():
 # Enhanced with multiple player clients for better compatibility
 YDL_EXTRACTOR_ARGS = {
     'youtube': {
-        'player_client': ['ios', 'android', 'web'],
+        'player_client': ['web'],
         'max_comments': [0],
         'skip': ['hls'],
         'comment_sort': 'top',
@@ -393,7 +395,7 @@ class MusicPlayer:
 
                 if not info:
                     return None
-                
+
                 # Add this check here
                 if info.get('formats'):
                     audio_formats = [f for f in info['formats'] 
@@ -401,7 +403,7 @@ class MusicPlayer:
                     if not audio_formats:
                         logger.warning(f"No audio formats available for {url}")
                         return None
-                
+
                 return self._get_audio_url(info)
             
             
