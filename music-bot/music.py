@@ -25,6 +25,9 @@ logging.basicConfig(
     ]
 )
 
+# Create logger instance for this module
+logger = logging.getLogger(__name__)
+
 # Show yt-dlp output in terminal
 logging.getLogger('yt_dlp').setLevel(logging.WARNING)
 logging.getLogger('discord.gateway').setLevel(logging.WARNING)
