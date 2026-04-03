@@ -14,9 +14,8 @@ from typing import List, Optional
 
 from config import MusicBotConfig
 
-# Setup logging
 logging.basicConfig(
-    level=getattr(logging, MusicBotConfig.LOG_LEVEL, logging.INFO),
+    level=logging.INFO,
     format='[{asctime}] [{levelname:<8}] {name}: {message}',
     datefmt='%Y-%m-%d %H:%M:%S',
     style='{',
@@ -25,10 +24,11 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger('discord.music')
 
-# Reduce gateway verbosity
+# Show yt-dlp output in terminal
+logging.getLogger('yt_dlp').setLevel(logging.WARNING)
 logging.getLogger('discord.gateway').setLevel(logging.WARNING)
+logging.getLogger('discord.voice_state').setLevel(logging.INFO)
 
 load_dotenv()
 TOKEN = MusicBotConfig.get_discord_token()

@@ -87,50 +87,46 @@ async def init_cookies(self):
 # ✅ IMPROVED YT-DLP options - Works with or without Node.js
 # Enhanced with anti-detection measures
 YDL_OPTS = {
-    'format': 'bestaudio/best/bestvideo',
-    'format_sort': ['acodec:opus', 'acodec:m4a', 'acodec:mp3', 'acodec'],
-    'quiet': True,
+    'format': 'bestaudio/best',
+    'quiet': False,          # Show in terminal
+    'no_warnings': False,    # Show warnings in terminal
     'skip_download': True,
-    'proxy': os.getenv('PROXY_URL', ''),
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
-    'extractor_retries': 3,
-    'fragment_retries': 3,
+    'extractor_retries': 2,
+    'fragment_retries': 2,
     'ignoreerrors': False,
-    # Anti-detection measures
     'no_check_certificate': True,
-    'prefer_insecure': True,
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'referer': 'https://www.youtube.com/',
-    'sleep_interval': 1,
-    'max_sleep_interval': 5,
-    'sleep_interval_requests': 1,
-    # Rate limiting to avoid detection
-    'ratelimit': 1000000,  # 1MB/s
-    'throttledratelimit': 100000,
-    # Additional options
     'geo_bypass': True,
     'geo_bypass_country': 'US',
-    
+    'socket_timeout': 8,
+    'sleep_interval': 1,
+    'max_sleep_interval': 3,
+    'sleep_interval_requests': 1,
+    'ratelimit': 2000000,
+    'throttledratelimit': 500000,
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'referer': 'https://www.youtube.com/',
+    'proxy': os.getenv('PROXY_URL', ''),
 }
 
 # Add cookies to YDL_OPTS if file exists
 def get_ydl_opts():
     opts = YDL_OPTS.copy()
+    opts['extractor_args'] = YDL_EXTRACTOR_ARGS
     if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
         opts['cookiefile'] = COOKIE_FILE
-        logger.info("✅ YouTube cookies enabled")
+        logger.info("✅ YouTube cookies loaded")
+    else:
+        logger.warning("⚠️ No cookies file found")
     return opts
 
 # Extractor's specific args for YouTube
 # Enhanced with multiple player clients for better compatibility
 YDL_EXTRACTOR_ARGS = {
     'youtube': {
-        'player_client': ['web'],
+        'player_client': ['tv_embedded', 'web'],
         'max_comments': [0],
-        'skip': ['hls'],
-        'comment_sort': 'top',
-        'max_comments': [0],  # Disable comment extraction
     }
 }
 
@@ -344,30 +340,14 @@ class MusicPlayer:
         """
         loop = asyncio.get_event_loop()
         
-        # Check if this is a YouTube Music URL
-        youtube_music_pattern = r'music\.youtube\.com/watch\?v=([a-zA-Z0-9_-]+)'
-        match = re.search(youtube_music_pattern, url)
-        
+
+         # Always convert YouTube Music to regular YouTube
+        match = re.search(r'music\.youtube\.com/watch\?v=([a-zA-Z0-9_-]+)', url)
         if match:
-            # This is a YouTube Music URL - try both YouTube Music and regular YouTube
-            video_id = match.group(1)
-            youtube_music_url = url
-            youtube_url = f"https://www.youtube.com/watch?v={video_id}"
-            
-            logger.info(f"Trying YouTube Music first: {youtube_music_url}")
-            
-            # First try YouTube Music
-            audio_url = await self._try_extract(loop, youtube_music_url, fast)
-            
-            if not audio_url:
-                # Fallback to regular YouTube
-                logger.warning(f"YouTube Music extraction failed, trying regular YouTube: {youtube_url}")
-                audio_url = await self._try_extract(loop, youtube_url, fast)
-            
-            return audio_url
-        else:
-            # Regular YouTube URL - just try once
-            return await self._try_extract(loop, url, fast)
+            url = f"https://www.youtube.com/watch?v={match.group(1)}"
+            logger.info(f"Converted to regular YouTube URL")
+
+        return await self._try_extract(loop, url, fast)
     
     async def _try_extract(self, loop, url: str, fast: bool = False, max_retries: int = 3) -> Optional[str]:
         """Helper method to extract audio URL with error handling and retry logic"""

@@ -375,9 +375,35 @@ class Music(commands.Cog):
         await self._send_response(ctx, embed=embed)
     
     # ==================== PLAYBACK COMMANDS ====================
-    
-    @commands.hybrid_command(name='play', description='Play a song or playlist from any platform')
-    @app_commands.describe(query='Song name, playlist URL, or album URL')
+    async def song_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+    ) -> List[app_commands.Choice[str]]:
+        """Provide song suggestions as user types"""
+        if not current or len(current) < 2:
+            return []
+
+        try:
+            from ytmusicapi import YTMusic
+            ytmusic = YTMusic()
+            results = ytmusic.search(current, filter="songs", limit=5)
+
+            choices = []
+            for result in results:
+                title = result.get('title', '')
+                artists = result.get('artists', [])
+                artist = artists[0]['name'] if artists else ''
+                display = f"{title} - {artist}"[:100]
+                choices.append(app_commands.Choice(name=display, value=display))
+
+            return choices
+        except Exception:
+            return []
+
+
+    @commands.hybrid_command(name='play', description='Play a song or playlist')
+    @app_commands.describe(query='Song name or URL')
+    @app_commands.autocomplete(query=song_autocomplete)
     async def play(self, ctx, *, query: str):
         """
         ⚡ ULTRA-FAST playback with:
@@ -1122,7 +1148,6 @@ class Music(commands.Cog):
         await self._send_response(ctx, embed=embed)
 
 async def setup(bot):
-    """Setup function to load the music cog"""
-    await bot.add_cog(Music(bot))
+    cog = Music(bot)
+    await bot.add_cog(cog)
     logger.info("⚡ Music cog loaded - ULTRA-FAST mode active")
-    await bot.player_manager.init_cookies()
