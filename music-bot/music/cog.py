@@ -17,7 +17,7 @@ import json
 import os
 
 from .logic.player_manager import PlayerManager, Song
-from .logic.search_manager import SearchManager, Platform
+from .logic.search_manager_v2 import SearchManager, Platform
 from .ui import MusicEmbeds, MusicControlsView, VolumeModal
 
 logger = logging.getLogger('discord.music')
@@ -375,29 +375,36 @@ class Music(commands.Cog):
         await self._send_response(ctx, embed=embed)
     
     # ==================== PLAYBACK COMMANDS ====================
+    @staticmethod
     async def song_autocomplete(
-    interaction: discord.Interaction,
-    current: str,
+        interaction: discord.Interaction,
+        current: str,
     ) -> List[app_commands.Choice[str]]:
         """Provide song suggestions as user types"""
         if not current or len(current) < 2:
             return []
+        
+        logger.info(f"🔍 Autocomplete: {current}")
 
         try:
-            from ytmusicapi import YTMusic
-            ytmusic = YTMusic()
-            results = ytmusic.search(current, filter="songs", limit=5)
-
-            choices = []
-            for result in results:
-                title = result.get('title', '')
-                artists = result.get('artists', [])
-                artist = artists[0]['name'] if artists else ''
-                display = f"{title} - {artist}"[:100]
-                choices.append(app_commands.Choice(name=display, value=display))
-
+            # Create a search manager instance
+            search_manager = SearchManager()
+            suggestions = await search_manager.get_suggestions(current, limit=5)
+            search_manager.shutdown()
+            
+            if not suggestions:
+                logger.info(f"No suggestions for: {current}")
+                return []
+            
+            choices = [
+                app_commands.Choice(name=sugg[:100], value=sugg)
+                for sugg in suggestions
+            ]
+            logger.info(f"✓ {len(choices)} suggestions found")
             return choices
-        except Exception:
+        
+        except Exception as e:
+            logger.error(f"Autocomplete error: {e}")
             return []
 
 
@@ -406,26 +413,19 @@ class Music(commands.Cog):
     @app_commands.autocomplete(query=song_autocomplete)
     async def play(self, ctx, *, query: str):
         """
-        ⚡ ULTRA-FAST playback with:
-        - Pre-extraction for instant start
-        - Streaming playlist loading
-        - Background pre-loading
+        ⚡ ULTRA-FAST playback (4-5 seconds)
+        - Anti-bot detection with proxy support
+        - Simplified search & extraction
+        - Full terminal logging
         """
+        logger.info(f"▶️ Play command: {query[:60]}")
+        
         try:
             await self._defer_if_slash(ctx)
-        except discord.errors.NotFound:
-            # Network issue or interaction expired - inform user
-            embed = discord.Embed(
-                description="⚠️ There was a network issue responding to your command. Please try again.",
-                color=0xffaa00
-            )
-            if ctx.channel:
-                return await ctx.channel.send(embed=embed)
-            return
         except Exception as e:
-            logger.error(f"Error in play command defer: {e}")
+            logger.error(f"Defer error: {e}")
             embed = discord.Embed(
-                description="⚠️ There was an issue processing your request. Please try again.",
+                description="⚠️ Network issue. Please try again.",
                 color=0xffaa00
             )
             if ctx.channel:
@@ -436,33 +436,32 @@ class Music(commands.Cog):
             player = self.player_manager.get_player(ctx.guild)
             player.text_channel = ctx.channel
 
-            # Connect to voice - check if actually connected, not just if client exists
+            # Connect to voice
             if not player.voice_client or not player.voice_client.is_connected():
                 if ctx.author.voice:
+                    logger.info(f"🔗 Connecting to voice channel: {ctx.author.voice.channel.name}")
                     success = await player.connect(ctx.author.voice.channel)
                     if not success:
-                        embed = MusicEmbeds.error("Failed to join voice! Please try again in a moment.")
+                        embed = MusicEmbeds.error("Failed to join voice! Try again.")
+                        logger.error(f"Failed to connect to voice")
                         return await self._send_response(ctx, embed=embed)
                 else:
                     embed = MusicEmbeds.error("You're not in a voice channel!")
+                    logger.warning(f"User not in voice channel")
                     return await self._send_response(ctx, embed=embed)
 
-            # Show searching message
+            # Show searching
             search_embed = discord.Embed(
-                description=f"🔍 Searching: **{query[:60]}...**",
+                description=f"🔍 Searching: **{query[:60]}**",
                 color=0x3498db
             )
             search_msg = await self._send_response(ctx, embed=search_embed)
+            logger.info(f"📺 Starting search (timeout: 5s)")
 
-            # ✅ FAST SEARCH (metadata only)
-            logger.info(f"⚡ Searching: {query}")
-            tracks, platform, is_playlist = await self.search_manager.search(
-                query, 
-                limit=50,
-                extract_audio=False  # Fast mode
-            )
+            # Fast search with timeout
+            tracks, platform, is_playlist = await self.search_manager.search(query, limit=20)
 
-            # Delete searching message
+            # Delete search message
             if search_msg:
                 try:
                     await search_msg.delete()
@@ -470,30 +469,23 @@ class Music(commands.Cog):
                     pass
 
             if not tracks:
-                embed = MusicEmbeds.error("❌ No tracks found!")
+                embed = MusicEmbeds.error(f"❌ No tracks found for: {query}")
+                logger.warning(f"No tracks found")
                 return await self._send_response(ctx, embed=embed)
 
-            # Handle playlist vs single track
+            logger.info(f"✓ Found {len(tracks)} tracks on {SearchManager.get_platform_name(platform)}")
+
+            # Handle playlist vs single
             if is_playlist and len(tracks) > 1:
+                logger.info(f"📋 Loading playlist with {len(tracks)} tracks")
                 await self._handle_playlist(ctx, tracks, platform, player)
             else:
-                # ✅ PRE-EXTRACT for instant playback
+                logger.info(f"🎵 Queueing single track: {tracks[0]['title'][:50]}")
                 await self._handle_single_track(ctx, tracks[0], player, pre_extract=True)
-        except discord.errors.NotFound as e:
-            # Network issue or interaction expired
-            logger.warning(f"NotFound error in play command: {e}")
-            embed = discord.Embed(
-                description="⚠️ There was a network issue. Your command may have timed out. Please try again.",
-                color=0xffaa00
-            )
-            if ctx.channel:
-                try:
-                    await ctx.channel.send(embed=embed)
-                except:
-                    pass
+        
         except Exception as e:
-            logger.error(f"Error in play command: {e}")
-            embed = MusicEmbeds.error(f"An error occurred: {str(e)[:100]}")
+            logger.error(f"Play command error: {e}", exc_info=True)
+            embed = MusicEmbeds.error(f"Error: {str(e)[:100]}")
             try:
                 await self._send_response(ctx, embed=embed)
             except:

@@ -3,6 +3,7 @@ Music Bot Configuration
 =======================
 
 Configuration settings for the standalone music bot.
+Support for proxy configuration for anti-bot detection.
 """
 
 import os
@@ -39,28 +40,38 @@ class MusicBotConfig:
         )
     }
     
-    # YouTube settings
+    # YouTube settings with optimized speed
     YDL_OPTIONS = {
         'format': 'bestaudio/best',
         'quiet': True,
         'skip_download': True,
         'default_search': 'ytsearch',
         'source_address': '0.0.0.0',
-        'extractor_retries': 5,
-        'fragment_retries': 5,
+        'extractor_retries': 2,
+        'fragment_retries': 2,
         'ignoreerrors': False,
+        'socket_timeout': 5,
     }
     
     # YouTube extractor args
     YDL_EXTRACTOR_ARGS = {
         'youtube': {
-            'player_client': ['default'],
-            'player_skip': ['configs', 'js', 'hls'],
+            'player_client': ['web'],
+            'max_comments': [0],
         }
     }
     
     # Cookie file path
     COOKIE_FILE = 'cookies.txt'
+    
+    # Proxy configuration for anti-bot detection
+    PROXY_URL = os.getenv('PROXY_URL', '')  # e.g., 'http://user:pass@proxy.com:8080'
+    USE_PROXY = bool(PROXY_URL)
+    PROXY_ROTATION_ENABLED = os.getenv('PROXY_ROTATION', 'false').lower() == 'true'
+    
+    # Speed optimization
+    SEARCH_TIMEOUT = 5  # 5 seconds max for search
+    EXTRACTION_TIMEOUT = 4  # 4 seconds max for extraction
     
     # Idle timeout (seconds)
     IDLE_TIMEOUT = 60
@@ -83,10 +94,17 @@ class MusicBotConfig:
         return os.getenv('YOUTUBE_COOKIE_URL', '')
     
     @classmethod
+    def get_proxy_url(cls) -> str:
+        """Get proxy URL for anti-bot detection"""
+        return cls.PROXY_URL
+    
+    @classmethod
     def validate(cls):
         """Validate configuration"""
         try:
             cls.get_discord_token()
+            if cls.USE_PROXY:
+                print(f"✓ Proxy enabled: {cls.PROXY_URL[:20]}...")
             return True
         except ValueError:
             return False
