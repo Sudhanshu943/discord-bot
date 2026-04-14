@@ -1,0 +1,13 @@
+[build]
+builder = "dockerfile"
+
+[deploy]
+startCommand = "python music.py"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+
+[healthcheck]
+interval = 300
+timeout = 30
+success_threshold = 1
+failure_threshold = 3

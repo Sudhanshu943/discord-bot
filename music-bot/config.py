@@ -3,11 +3,14 @@ Music Bot Configuration
 =======================
 
 Configuration settings for the standalone music bot.
-Support for proxy configuration for anti-bot detection.
+This module imports centralized constants from music/constants.py
 """
 
 import os
 from dotenv import load_dotenv
+
+# Import centralized constants from music module
+from music import constants
 
 load_dotenv()
 
@@ -16,69 +19,38 @@ class MusicBotConfig:
     """Configuration for the music bot"""
     
     # Bot settings
-    COMMAND_PREFIX = '!'
-    MAX_QUEUE_SIZE = 100
-    DEFAULT_VOLUME = 0.5
+    COMMAND_PREFIX = constants.COMMAND_PREFIX
+    MAX_QUEUE_SIZE = constants.LIMITS['MAX_QUEUE_SIZE']
+    DEFAULT_VOLUME = constants.LIMITS['DEFAULT_VOLUME']
+    LOG_LEVEL = constants.LOG_LEVEL
+    LOG_FILE = constants.LOG_FILE
     
     # Voice settings
-    SELF_DEAF = True
-    SELF_MUTE = False
+    SELF_DEAF = constants.VOICE_SETTINGS['SELF_DEAF']
+    SELF_MUTE = constants.VOICE_SETTINGS['SELF_MUTE']
     
     # Playback settings
-    FFMPEG_OPTIONS = {
-        'before_options': (
-            '-reconnect 1 '
-            '-reconnect_streamed 1 '
-            '-reconnect_delay_max 5 '
-        ),
-        'options': (
-            '-vn '                          # No video
-            '-bufsize 512k '                # Small buffer
-            '-ar 48000 '                   # 48kHz sample rate
-            '-ac 2 '                        # Stereo
-            '-b:a 128k'                    # 128kbps bitrate
-        )
-    }
+    FFMPEG_OPTIONS = constants.FFMPEG_OPTS
     
-    # YouTube settings with optimized speed
-    YDL_OPTIONS = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-        'skip_download': True,
-        'default_search': 'ytsearch',
-        'source_address': '0.0.0.0',
-        'extractor_retries': 2,
-        'fragment_retries': 2,
-        'ignoreerrors': False,
-        'socket_timeout': 5,
-    }
-    
-    # YouTube extractor args
-    YDL_EXTRACTOR_ARGS = {
-        'youtube': {
-            'player_client': ['web'],
-            'max_comments': [0],
-        }
-    }
+    # YouTube settings
+    YDL_OPTIONS = constants.YDL_OPTS
+    YDL_EXTRACTOR_ARGS = constants.YDL_EXTRACTOR_ARGS
     
     # Cookie file path
-    COOKIE_FILE = 'cookies.txt'
+    COOKIE_FILE = constants.COOKIE_FILE
     
     # Proxy configuration for anti-bot detection
-    PROXY_URL = os.getenv('PROXY_URL', '')  # e.g., 'http://user:pass@proxy.com:8080'
-    USE_PROXY = bool(PROXY_URL)
-    PROXY_ROTATION_ENABLED = os.getenv('PROXY_ROTATION', 'false').lower() == 'true'
+    PROXY_URL = constants.PROXY_URL
+    USE_PROXY = constants.USE_PROXY
+    PROXY_ROTATION_ENABLED = constants.PROXY_ROTATION_ENABLED
     
-    # Speed optimization
-    SEARCH_TIMEOUT = 5  # 5 seconds max for search
-    EXTRACTION_TIMEOUT = 4  # 4 seconds max for extraction
+    # Speed optimization - Use timeouts from constants
+    SEARCH_TIMEOUT = constants.TIMEOUTS['SEARCH']
+    EXTRACTION_TIMEOUT = constants.TIMEOUTS['AUDIO_EXTRACTION']
+    VOICE_CONNECT_TIMEOUT = constants.TIMEOUTS['VOICE_CONNECT']
     
     # Idle timeout (seconds)
-    IDLE_TIMEOUT = 60
-    
-    # Logging
-    LOG_LEVEL = 'INFO'
-    LOG_FILE = 'music-bot.log'
+    IDLE_TIMEOUT = constants.LIMITS['AUTO_DISCONNECT_IDLE']
     
     @classmethod
     def get_discord_token(cls) -> str:

@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  discord-music-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      PROXIES: ${PROXIES:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./.cache:/app/.cache  # Persist cookies
+    restart: unless-stopped
+    # Only use these ports if bot needs external access (usually not needed)
+    # ports:
+    #   - "5000:5000"
+    networks:
+      - music-bot-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import discord; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  music-bot-network:
+    driver: bridge
