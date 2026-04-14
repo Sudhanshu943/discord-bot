@@ -133,11 +133,7 @@ class MusicBot(commands.Bot):
     
     async def on_ready(self):
         """Called when the bot is ready"""
-        # Download cookies first
-        from music.logic.player_manager import download_youtube_cookies
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, download_youtube_cookies)
-
+        # Cookie management handled by anti-bot detection module automatically
         logger.info(f'🎵 Music Bot connected as {self.user}')
         logger.info(f'📡 Connected to {len(self.guilds)} guilds')
         
